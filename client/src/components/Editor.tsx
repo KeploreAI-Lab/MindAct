@@ -16,34 +16,42 @@ interface Props {
   content: string;
   readOnly?: boolean;
   vaultFiles?: TreeNode[];
+  platformFiles?: TreeNode[];
   onSave?: (content: string) => void;
   onLinkClick?: (name: string) => void;
+  onCrossLinkClick?: (name: string) => void;
 }
 
 const wikiLinkMark = Decoration.mark({ class: "cm-wiki-link" });
+const crossLinkMark = Decoration.mark({ class: "cm-cross-link" });
 
-function buildWikiLinkPlugin(onLinkClick?: (name: string) => void) {
+function buildLinkPlugin() {
   return ViewPlugin.fromClass(
     class {
       decorations: DecorationSet;
-      constructor(view: EditorView) {
-        this.decorations = this.buildDecorations(view);
-      }
+      constructor(view: EditorView) { this.decorations = this.buildDecorations(view); }
       update(update: ViewUpdate) {
-        if (update.docChanged || update.viewportChanged) {
-          this.decorations = this.buildDecorations(update.view);
-        }
+        if (update.docChanged || update.viewportChanged) this.decorations = this.buildDecorations(update.view);
       }
       buildDecorations(view: EditorView): DecorationSet {
         const builder = new RangeSetBuilder<Decoration>();
-        const re = /\[\[([^\]]+)\]\]/g;
+        const wikiRe = /\[\[([^\]]+)\]\]/g;
+        const crossRe = /\{\{([^}]+)\}\}/g;
         for (const { from, to } of view.visibleRanges) {
           const text = view.state.sliceDoc(from, to);
+          // Collect all matches with their positions, then sort and add in order
+          const marks: { start: number; end: number; deco: Decoration }[] = [];
           let m: RegExpExecArray | null;
-          re.lastIndex = 0;
-          while ((m = re.exec(text)) !== null) {
-            builder.add(from + m.index, from + m.index + m[0].length, wikiLinkMark);
+          wikiRe.lastIndex = 0;
+          while ((m = wikiRe.exec(text)) !== null) {
+            marks.push({ start: from + m.index, end: from + m.index + m[0].length, deco: wikiLinkMark });
           }
+          crossRe.lastIndex = 0;
+          while ((m = crossRe.exec(text)) !== null) {
+            marks.push({ start: from + m.index, end: from + m.index + m[0].length, deco: crossLinkMark });
+          }
+          marks.sort((a, b) => a.start - b.start);
+          for (const { start, end, deco } of marks) builder.add(start, end, deco);
         }
         return builder.finish();
       }
@@ -52,32 +60,42 @@ function buildWikiLinkPlugin(onLinkClick?: (name: string) => void) {
   );
 }
 
-const wikiLinkStyle = EditorView.baseTheme({
+const linkStyles = EditorView.baseTheme({
   ".cm-wiki-link": {
     color: "#f0a500 !important",
     cursor: "pointer",
     textDecoration: "underline",
     textDecorationStyle: "dotted",
   },
+  ".cm-cross-link": {
+    color: "#7ec8e3 !important",
+    cursor: "pointer",
+    textDecoration: "underline",
+    textDecorationStyle: "dashed",
+    fontStyle: "italic",
+  },
 });
 
-export default function Editor({ path, content, readOnly, vaultFiles, onSave, onLinkClick }: Props) {
+export default function Editor({ path, content, readOnly, vaultFiles, platformFiles, onSave, onLinkClick, onCrossLinkClick }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const flatVaultNames = useCallback((): string[] => {
-    if (!vaultFiles) return [];
+  const flatNames = useCallback((nodes: TreeNode[] | undefined): string[] => {
+    if (!nodes) return [];
     const names: string[] = [];
-    function walk(nodes: TreeNode[]) {
-      for (const n of nodes) {
+    function walk(ns: TreeNode[]) {
+      for (const n of ns) {
         if (n.type === "file" && n.name.endsWith(".md")) names.push(n.name.replace(/\.md$/, ""));
         if (n.children) walk(n.children);
       }
     }
-    walk(vaultFiles);
+    walk(nodes);
     return names;
-  }, [vaultFiles]);
+  }, []);
+
+  const flatVaultNames = useCallback(() => flatNames(vaultFiles), [vaultFiles, flatNames]);
+  const flatPlatformNames = useCallback(() => flatNames(platformFiles), [platformFiles, flatNames]);
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -95,6 +113,19 @@ export default function Editor({ path, content, readOnly, vaultFiles, onSave, on
       };
     };
 
+    const crossLinkCompletion = (context: CompletionContext): CompletionResult | null => {
+      const match = context.matchBefore(/\{\{[^}]*$/);
+      if (!match) return null;
+      const query = match.text.slice(2).trimStart();
+      const names = flatPlatformNames();
+      return {
+        from: match.from + 2,
+        options: names
+          .filter(n => n.toLowerCase().includes(query.toLowerCase()))
+          .map(n => ({ label: n, apply: " " + n + " }}" })),
+      };
+    };
+
     const extensions: Extension[] = [
       lineNumbers(),
       highlightActiveLine(),
@@ -103,8 +134,8 @@ export default function Editor({ path, content, readOnly, vaultFiles, onSave, on
       keymap.of([...defaultKeymap, ...historyKeymap]),
       markdown(),
       oneDark,
-      buildWikiLinkPlugin(onLinkClick),
-      wikiLinkStyle,
+      buildLinkPlugin(),
+      linkStyles,
       EditorView.updateListener.of((update) => {
         if (update.docChanged && !readOnly && onSave) {
           if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
@@ -116,7 +147,7 @@ export default function Editor({ path, content, readOnly, vaultFiles, onSave, on
     ];
 
     if (!readOnly) {
-      extensions.push(autocompletion({ override: [wikiLinkCompletion] }));
+      extensions.push(autocompletion({ override: [wikiLinkCompletion, crossLinkCompletion] }));
     } else {
       extensions.push(EditorState.readOnly.of(true));
     }
@@ -124,17 +155,21 @@ export default function Editor({ path, content, readOnly, vaultFiles, onSave, on
     extensions.push(
       EditorView.domEventHandlers({
         click(event, view) {
-          if (!onLinkClick) return false;
           const target = event.target as HTMLElement;
-          if (!target.classList.contains("cm-wiki-link")) return false;
-          const pos = view.posAtDOM(target);
           const docText = view.state.doc.toString();
-          const re = /\[\[([^\]]+)\]\]/g;
+          const pos = view.posAtDOM(target);
           let m: RegExpExecArray | null;
-          while ((m = re.exec(docText)) !== null) {
-            if (pos >= m.index && pos <= m.index + m[0].length) {
-              onLinkClick(m[1]);
-              return true;
+
+          if (target.classList.contains("cm-wiki-link") && onLinkClick) {
+            const re = /\[\[([^\]]+)\]\]/g;
+            while ((m = re.exec(docText)) !== null) {
+              if (pos >= m.index && pos <= m.index + m[0].length) { onLinkClick(m[1]); return true; }
+            }
+          }
+          if (target.classList.contains("cm-cross-link") && onCrossLinkClick) {
+            const re = /\{\{([^}]+)\}\}/g;
+            while ((m = re.exec(docText)) !== null) {
+              if (pos >= m.index && pos <= m.index + m[0].length) { onCrossLinkClick(m[1].trim()); return true; }
             }
           }
           return false;

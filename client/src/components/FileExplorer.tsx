@@ -16,7 +16,7 @@ async function checkDir(path: string): Promise<boolean> {
 }
 
 export default function FileExplorer() {
-  const { projectTree, config, setConfig, setProjectTree } = useStore();
+  const { projectTree, config, setConfig, setProjectTree, setTerminalBanner } = useStore();
   const [openFilePath, setOpenFilePath] = useState<string | null>(null);
   const [openFileContent, setOpenFileContent] = useState<string | null>(null);
   const [pathInput, setPathInput] = useState(config?.project_path ?? "");
@@ -45,6 +45,7 @@ export default function FileExplorer() {
     await fetch("/api/config", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(newConfig) });
     setConfig(newConfig);
     loadProject(trimmed);
+    setTerminalBanner(`!cd ${trimmed}`);
   }, [config, setConfig, loadProject]);
 
   const handleBrowse = useCallback(async () => {

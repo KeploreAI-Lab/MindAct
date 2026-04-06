@@ -5,21 +5,34 @@ import FileExplorer from "./components/FileExplorer";
 import Terminal from "./components/Terminal";
 import Graph from "./components/Graph";
 import SetupDialog from "./components/SetupDialog";
+import HistoryPanel from "./components/HistoryPanel";
 
 export default function App() {
-  const {
-    config, configLoaded, setConfig, setConfigLoaded,
-    setVaultTree, setProjectTree,
-    activeTab, setActiveTab,
-    graphMode, setGraphMode,
-    panelRatio, setPanelRatio,
-  } = useStore();
+  const config = useStore(s => s.config);
+  const configLoaded = useStore(s => s.configLoaded);
+  const setConfig = useStore(s => s.setConfig);
+  const setConfigLoaded = useStore(s => s.setConfigLoaded);
+  const setVaultTree = useStore(s => s.setVaultTree);
+  const setPlatformTree = useStore(s => s.setPlatformTree);
+  const setProjectTree = useStore(s => s.setProjectTree);
+  const activeTab = useStore(s => s.activeTab);
+  const setActiveTab = useStore(s => s.setActiveTab);
+  const graphMode = useStore(s => s.graphMode);
+  const setGraphMode = useStore(s => s.setGraphMode);
+  const panelRatio = useStore(s => s.panelRatio);
+  const setPanelRatio = useStore(s => s.setPanelRatio);
 
   const [showSettings, setShowSettings] = useState(false);
+  const [showHistory, setShowHistory] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
   const dragging = useRef(false);
 
   useEffect(() => {
+    // Load platform tree (always available, server-provided)
+    fetch("/api/platform/tree")
+      .then(r => r.json())
+      .then(data => { if (Array.isArray(data)) setPlatformTree(data); });
+
     fetch("/api/config")
       .then(r => r.json())
       .then(data => {
@@ -122,13 +135,19 @@ export default function App() {
           onClick={() => setGraphMode(!graphMode)}
           style={btnStyle(graphMode)}
         >
-          {graphMode ? "← Back" : "Graph"}
+          {graphMode ? "← Back" : "Brain"}
         </button>
         <button
           onClick={() => setShowSettings(true)}
           style={btnStyle(false)}
         >
           Settings
+        </button>
+        <button
+          onClick={() => setShowHistory(h => !h)}
+          style={btnStyle(showHistory)}
+        >
+          History
         </button>
       </div>
 
@@ -181,8 +200,13 @@ export default function App() {
           width: rightWidth,
           overflow: "hidden",
           transition: "width 0.2s ease",
+          display: "flex",
+          flexDirection: "row",
         }}>
-          <Terminal />
+          <div style={{ flex: 1, overflow: "hidden", minWidth: 0 }}>
+            <Terminal />
+          </div>
+          {showHistory && <HistoryPanel />}
         </div>
       </div>
 

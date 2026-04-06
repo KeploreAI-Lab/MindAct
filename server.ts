@@ -2,7 +2,11 @@ import { serve } from "bun";
 import { existsSync, mkdirSync, readdirSync, statSync, readFileSync, writeFileSync, unlinkSync } from "fs";
 import { join, extname, relative, basename } from "path";
 import { homedir } from "os";
-import pty from "node-pty";
+import { createRequire } from "module";
+// node-pty must be loaded via Node's require (not Bun's) because its native
+// addon uses posix_spawnp via spawn-helper, which Bun's loader breaks.
+// We shell out to `node` for the PTY worker instead.
+const nodeBin = process.env.NODE_PATH || "node";
 
 const CONFIG_DIR = join(homedir(), ".physmind");
 const CONFIG_FILE = join(CONFIG_DIR, "config.json");
@@ -80,11 +84,12 @@ function collectMdFiles(dir: string): string[] {
 }
 
 function parseLinks(content: string): string[] {
-  const re = /\[\[([^\]]+)\]\]/g;
+  // Matches both [[wiki]] and {{ cross }} links
+  const re = /\[\[([^\]]+)\]\]|\{\{([^}]+)\}\}/g;
   const links: string[] = [];
   let m;
   while ((m = re.exec(content)) !== null) {
-    links.push(m[1].trim());
+    links.push((m[1] || m[2]).trim());
   }
   return links;
 }
@@ -111,53 +116,79 @@ function errorResponse(msg: string, status = 400) {
   });
 }
 
-// PTY management
+// PTY management — runs a Node.js worker process that owns node-pty,
+// communicating via newline-delimited JSON on stdio.
 interface PtySession {
-  pty: ReturnType<typeof pty.spawn>;
+  worker: ReturnType<typeof Bun.spawn>;
   ws: import("bun").ServerWebSocket<unknown>;
 }
 
-const ptySessions = new Map<import("bun").ServerWebSocket<unknown>, ReturnType<typeof pty.spawn>>();
+const ptySessions = new Map<import("bun").ServerWebSocket<unknown>, PtySession>();
+
+const PTY_WORKER = join(import.meta.dir, "pty-worker.cjs");
 
 function spawnPty(ws: import("bun").ServerWebSocket<unknown>, projectPath: string) {
-  // Kill existing
   const existing = ptySessions.get(ws);
   if (existing) {
-    try { existing.kill(); } catch {}
+    try { existing.worker.kill(); } catch {}
+    ptySessions.delete(ws);
   }
 
-  const shell = process.env.SHELL || "/bin/zsh";
-  const ptyProcess = pty.spawn("bun", [
-    "run",
-    "/Users/jtu/important-code/src/entrypoints/cli.tsx"
-  ], {
-    name: "xterm-256color",
-    cols: 120,
-    rows: 40,
-    cwd: projectPath || homedir(),
-    env: { ...process.env, TERM: "xterm-256color" },
-  });
+  const cwd = (projectPath && existsSync(projectPath)) ? projectPath : homedir();
 
-  ptyProcess.onData((data: string) => {
-    try {
-      ws.send(JSON.stringify({ type: "data", data }));
-    } catch {}
-  });
+  let worker: ReturnType<typeof Bun.spawn>;
+  try {
+    worker = Bun.spawn(["node", PTY_WORKER], {
+      cwd,
+      env: { ...process.env, PTY_CWD: cwd },
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+  } catch (err: any) {
+    console.error("PTY worker spawn failed:", err.message);
+    try { ws.send(JSON.stringify({ type: "data", data: `\r\n\x1b[31m[Error] ${err.message}\x1b[0m\r\n` })); } catch {}
+    return null;
+  }
 
-  ptyProcess.onExit(() => {
+  // Stream stdout (newline-delimited JSON) → WebSocket
+  (async () => {
+    let buf = "";
+    let msgCount = 0;
     try {
-      ws.send(JSON.stringify({ type: "exit" }));
-    } catch {}
+      for await (const chunk of worker.stdout) {
+        buf += new TextDecoder().decode(chunk);
+        const lines = buf.split("\n");
+        buf = lines.pop()!;
+        for (const line of lines) {
+          if (!line.trim()) continue;
+          try {
+            const msg = JSON.parse(line);
+            ws.send(JSON.stringify(msg));
+            msgCount++;
+            if (msgCount <= 2) console.log(`[PTY] sent msg #${msgCount} type=${msg.type} len=${msg.data?.length ?? 0}`);
+          } catch (e: any) {
+            console.error("[PTY] parse/send error:", e.message, line.slice(0, 50));
+          }
+        }
+      }
+    } catch (e: any) {
+      console.error("[PTY] stream error:", e.message);
+    }
+    console.log(`[PTY] worker done, sent ${msgCount} msgs`);
+    try { ws.send(JSON.stringify({ type: "exit" })); } catch {}
     ptySessions.delete(ws);
-  });
+  })();
 
-  ptySessions.set(ws, ptyProcess);
-  return ptyProcess;
+  const session: PtySession = { worker, ws };
+  ptySessions.set(ws, session);
+  console.log("[PTY] Worker started, pid:", worker.pid);
+  return session;
 }
 
 const server = serve({
   port: PORT,
-  fetch(req, server) {
+  async fetch(req, server) {
     const url = new URL(req.url);
 
     // Handle WebSocket upgrade
@@ -244,6 +275,70 @@ const server = serve({
       return jsonResponse({ nodes, edges });
     }
 
+    // Combined graph: private vault + platform, with cross-section edges
+    if (url.pathname === "/api/graph/all") {
+      const vaultPath = url.searchParams.get("path") || readConfig()?.vault_path || "";
+      const platformDir = join(homedir(), ".physmind", "platform");
+
+      const privateFiles = vaultPath && existsSync(vaultPath) ? collectMdFiles(vaultPath) : [];
+      const platformFiles = existsSync(platformDir) ? collectMdFiles(platformDir) : [];
+
+      const nodes: { id: string; label: string; path: string; source: "private" | "platform" }[] = [];
+      const edges: { source: string; target: string }[] = [];
+      const nameToId = new Map<string, string>();
+
+      for (const f of platformFiles) {
+        const name = basename(f, ".md");
+        nameToId.set(name.toLowerCase(), f);
+        nodes.push({ id: f, label: name, path: f, source: "platform" });
+      }
+      for (const f of privateFiles) {
+        const name = basename(f, ".md");
+        nameToId.set(name.toLowerCase(), f);
+        nodes.push({ id: f, label: name, path: f, source: "private" });
+      }
+
+      for (const f of [...privateFiles, ...platformFiles]) {
+        try {
+          const content = readFileSync(f, "utf-8");
+          const links = parseLinks(content);
+          for (const link of links) {
+            const targetId = nameToId.get(link.toLowerCase());
+            if (targetId && targetId !== f) edges.push({ source: f, target: targetId });
+          }
+        } catch {}
+      }
+
+      return jsonResponse({ nodes, edges });
+    }
+
+    // Inject a system message into all active PTY sessions
+    if (url.pathname === "/api/pty/notify" && req.method === "POST") {
+      return req.json().then((body: { text: string }) => {
+        const msg = `\r\n\x1b[36m[PhysMind] ${body.text}\x1b[0m\r\n`;
+        for (const [ws] of ptySessions) {
+          try { ws.send(JSON.stringify({ type: "data", data: msg })); } catch {}
+        }
+        return jsonResponse({ ok: true });
+      });
+    }
+
+    // Restart PTY worker with a new CWD (called when project path changes)
+    if (url.pathname === "/api/pty/switch-cwd" && req.method === "POST") {
+      return req.json().then((body: { cwd: string; text?: string }) => {
+        for (const [ws] of ptySessions) {
+          try {
+            if (body.text) {
+              ws.send(JSON.stringify({ type: "data", data: `\r\n\x1b[36m[PhysMind] ${body.text}\x1b[0m\r\n` }));
+            }
+            // Small delay so the message renders before restart clears
+            setTimeout(() => spawnPty(ws, body.cwd), 300);
+          } catch {}
+        }
+        return jsonResponse({ ok: true });
+      });
+    }
+
     if (url.pathname === "/api/pick-dir") {
       // macOS native folder picker via AppleScript
       try {
@@ -276,6 +371,31 @@ const server = serve({
     if (url.pathname === "/api/check-dir") {
       const p = url.searchParams.get("path") || "";
       return jsonResponse({ exists: p ? existsSync(p) : false });
+    }
+
+    if (url.pathname === "/api/upload-image" && req.method === "POST") {
+      const body = await req.json() as { data: string; ext: string };
+      const tmpDir = join(homedir(), ".physmind", "tmp");
+      if (!existsSync(tmpDir)) mkdirSync(tmpDir, { recursive: true });
+      const fileName = `img-${Date.now()}.${body.ext || "png"}`;
+      const filePath = join(tmpDir, fileName);
+      const buf = Buffer.from(body.data, "base64");
+      writeFileSync(filePath, buf);
+      return jsonResponse({ path: filePath });
+    }
+
+    if (url.pathname === "/api/platform/tree") {
+      const platformDir = join(homedir(), ".physmind", "platform");
+      if (!existsSync(platformDir)) mkdirSync(platformDir, { recursive: true });
+      const tree = buildTree(platformDir, undefined, 0, 3);
+      return jsonResponse(tree);
+    }
+
+    if (url.pathname === "/api/platform/file") {
+      const p = url.searchParams.get("path") || "";
+      if (!p || !existsSync(p)) return errorResponse("file not found");
+      const content = readFileSync(p, "utf-8");
+      return jsonResponse({ content });
     }
 
     if (url.pathname === "/api/project/tree") {
@@ -312,22 +432,21 @@ const server = serve({
     message(ws, message) {
       try {
         const msg = JSON.parse(message.toString());
-        const ptyProcess = ptySessions.get(ws);
-        if (!ptyProcess) return;
-        if (msg.type === "input") {
-          ptyProcess.write(msg.data);
-        } else if (msg.type === "resize") {
-          ptyProcess.resize(msg.cols, msg.rows);
-        } else if (msg.type === "restart") {
+        if (msg.type === "restart") {
           const config = readConfig();
           spawnPty(ws, config?.project_path || homedir());
+          return;
         }
+        const session = ptySessions.get(ws);
+        if (!session) return;
+        // Forward message as newline-delimited JSON to worker stdin
+        session.worker.stdin.write(JSON.stringify(msg) + "\n");
       } catch {}
     },
     close(ws) {
-      const ptyProcess = ptySessions.get(ws);
-      if (ptyProcess) {
-        try { ptyProcess.kill(); } catch {}
+      const session = ptySessions.get(ws);
+      if (session) {
+        try { session.worker.kill(); } catch {}
         ptySessions.delete(ws);
       }
     },
