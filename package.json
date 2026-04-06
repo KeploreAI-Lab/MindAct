@@ -1,0 +1,19 @@
+{
+  "name": "physmind-app",
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "concurrently \"bun run server.ts\" \"cd client && bun run dev\"",
+    "server": "bun run server.ts",
+    "build": "cd client && bun run build",
+    "start": "bun run build && bun run server.ts"
+  },
+  "dependencies": {
+    "node-pty": "^1.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "concurrently": "^8.2.0",
+    "electron": "^40.8.5"
+  }
+}
