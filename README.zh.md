@@ -117,6 +117,7 @@ mindact/
 - [Bun](https://bun.sh) ≥ 1.0
 - [Node.js](https://nodejs.org) ≥ 18（node-pty 依赖）
 - [Electron](https://electronjs.org)
+- [Claude Code CLI](https://docs.anthropic.com/claude-code) — `npm install -g @anthropic-ai/claude-code`
 - [Anthropic API Key](https://console.anthropic.com)
 
 ### 安装
