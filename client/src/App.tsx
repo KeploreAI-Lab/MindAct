@@ -6,6 +6,7 @@ import Terminal from "./components/Terminal";
 import Graph from "./components/Graph";
 import SetupDialog from "./components/SetupDialog";
 import HistoryPanel from "./components/HistoryPanel";
+import BrainInspect from "./components/BrainInspect";
 
 export default function App() {
   const config = useStore(s => s.config);
@@ -19,15 +20,19 @@ export default function App() {
   const setActiveTab = useStore(s => s.setActiveTab);
   const graphMode = useStore(s => s.graphMode);
   const setGraphMode = useStore(s => s.setGraphMode);
+  const setKbViewMode = useStore(s => s.setKbViewMode);
   const panelRatio = useStore(s => s.panelRatio);
   const setPanelRatio = useStore(s => s.setPanelRatio);
 
   const [showSettings, setShowSettings] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
+  const [showBrainInspect, setShowBrainInspect] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
   const dragging = useRef(false);
 
   useEffect(() => {
+    // Expose setPlatformTree globally for BrainInspect URL loader
+    (window as any).__physmindSetPlatformTree = setPlatformTree;
     // Load platform tree (always available, server-provided)
     fetch("/api/platform/tree")
       .then(r => r.json())
@@ -129,14 +134,8 @@ export default function App() {
         flexShrink: 0,
         userSelect: "none",
       }}>
-        <span style={{ color: "#007acc", fontWeight: 700, fontSize: 15, letterSpacing: 1 }}>PhysMind</span>
+        <span style={{ color: "#007acc", fontWeight: 700, fontSize: 15, letterSpacing: 1 }}>MindAct</span>
         <div style={{ flex: 1 }} />
-        <button
-          onClick={() => setGraphMode(!graphMode)}
-          style={btnStyle(graphMode)}
-        >
-          {graphMode ? "← Back" : "Brain"}
-        </button>
         <button
           onClick={() => setShowSettings(true)}
           style={btnStyle(false)}
@@ -164,7 +163,7 @@ export default function App() {
           transition: "width 0.2s ease",
         }}>
           {graphMode ? (
-            <Graph />
+            <Graph onExitFullscreen={() => { setGraphMode(false); setActiveTab("kb"); setKbViewMode("brain"); }} onBrainInspect={() => setShowBrainInspect(true)} />
           ) : (
             <>
               {/* Tabs */}
@@ -173,7 +172,7 @@ export default function App() {
                 <TabBtn label="Project" active={activeTab === "files"} onClick={() => setActiveTab("files")} />
               </div>
               <div style={{ flex: 1, overflow: "hidden", display: "flex", flexDirection: "column" }}>
-                {activeTab === "kb" ? <KBPanel /> : <FileExplorer />}
+                {activeTab === "kb" ? <KBPanel onFullscreenBrain={() => setGraphMode(true)} onBrainInspect={() => setShowBrainInspect(true)} /> : <FileExplorer />}
               </div>
             </>
           )}
@@ -209,6 +208,9 @@ export default function App() {
           {showHistory && <HistoryPanel />}
         </div>
       </div>
+
+      {/* BrainInspect overlay */}
+      {showBrainInspect && <BrainInspect onClose={() => setShowBrainInspect(false)} />}
 
       {/* Settings modal */}
       {showSettings && (

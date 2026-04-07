@@ -68,10 +68,15 @@ export default function FileExplorer() {
 
   const openFile = useCallback((node: TreeNode) => {
     if (node.type !== "file") return;
-    fetch(`/api/vault/file?path=${encodeURIComponent(node.path)}`)
+    fetch(`/api/project/file?path=${encodeURIComponent(node.path)}`)
       .then(r => r.json())
       .then(data => { setOpenFilePath(node.path); setOpenFileContent(data.content ?? ""); });
   }, []);
+
+  const handleSave = useCallback((content: string) => {
+    if (!openFilePath) return;
+    fetch("/api/project/file", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ path: openFilePath, content }) });
+  }, [openFilePath]);
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
@@ -138,11 +143,11 @@ export default function FileExplorer() {
           <div style={{ height: 1, background: "#444", flexShrink: 0 }} />
           <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}>
             <div style={{ padding: "4px 8px", background: "#2d2d2d", borderBottom: "1px solid #333", fontSize: 11, color: "#888", flexShrink: 0, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-              <span style={{ fontStyle: "italic" }}>{openFilePath.split("/").pop()} (read-only)</span>
+              <span style={{ fontStyle: "italic" }}>{openFilePath.split("/").pop()}</span>
               <button onClick={() => { setOpenFilePath(null); setOpenFileContent(null); }} style={{ background: "none", border: "none", color: "#888", cursor: "pointer", fontSize: 14 }}>×</button>
             </div>
             <div style={{ flex: 1, overflow: "hidden" }}>
-              <Editor path={openFilePath} content={openFileContent} readOnly />
+              <Editor path={openFilePath} content={openFileContent} onSave={handleSave} />
             </div>
           </div>
         </>

@@ -1,5 +1,8 @@
 import { create } from "zustand";
 
+// Re-export graph types from graph_manager — single source of truth
+export type { GraphNode, GraphEdge } from "./graph_manager";
+
 export interface Config {
   vault_path: string;
   project_path: string;
@@ -13,29 +16,23 @@ export interface TreeNode {
   children?: TreeNode[];
 }
 
-export interface GraphNode {
-  id: string;
-  label: string;
-  path: string;
-  x?: number;
-  y?: number;
-  vx?: number;
-  vy?: number;
-  fx?: number | null;
-  fy?: number | null;
-  inDegree?: number;
-}
-
-export interface GraphEdge {
-  source: string | GraphNode;
-  target: string | GraphNode;
-}
 
 export interface HistoryEntry {
   id: number;
   role: "user" | "assistant";
   text: string;
   line: number; // xterm buffer line number to scroll to
+}
+
+export interface GraphHighlightNode {
+  id: string;   // file path (matches GraphNode.path)
+  status: "found" | "missing";
+}
+
+export interface LogEntry {
+  id: number;
+  text: string;
+  ts: number;
 }
 
 interface AppState {
@@ -46,6 +43,7 @@ interface AppState {
   projectTree: TreeNode[];
   activeTab: "kb" | "files";
   graphMode: boolean;
+  kbViewMode: "files" | "brain";
   openFilePath: string | null;
   openFileContent: string | null;
   searchQuery: string;
@@ -53,6 +51,16 @@ interface AppState {
   terminalBanner: string | null;
   chatHistory: HistoryEntry[];
   scrollToTerminalLine: ((line: number) => void) | null;
+  isThinking: boolean;
+
+  // Dependency analysis
+  analysisMode: boolean;
+  analysisRunning: boolean;
+  graphHighlights: GraphHighlightNode[];
+  ghostNodes: { name: string; template: string }[];   // missing deps with AI-generated templates
+  pendingGhostFile: { name: string; template: string } | null; // unsaved ghost file being edited
+  logEntries: LogEntry[];
+  logDrawerOpen: boolean;
 
   setConfig: (c: Config) => void;
   setConfigLoaded: (v: boolean) => void;
@@ -61,6 +69,7 @@ interface AppState {
   setProjectTree: (t: TreeNode[]) => void;
   setActiveTab: (t: "kb" | "files") => void;
   setGraphMode: (v: boolean) => void;
+  setKbViewMode: (m: "files" | "brain") => void;
   setOpenFile: (path: string | null, content: string | null) => void;
   setSearchQuery: (q: string) => void;
   setPanelRatio: (r: number) => void;
@@ -68,7 +77,22 @@ interface AppState {
   addHistoryEntry: (entry: HistoryEntry) => void;
   clearHistory: () => void;
   setScrollToTerminalLine: (fn: ((line: number) => void) | null) => void;
+  setIsThinking: (v: boolean) => void;
+
+  setAnalysisMode: (v: boolean) => void;
+  setAnalysisRunning: (v: boolean) => void;
+  setGraphHighlights: (nodes: GraphHighlightNode[]) => void;
+  clearGraphHighlights: () => void;
+  setGhostNodes: (nodes: { name: string; template: string }[]) => void;
+  clearGhostNodes: () => void;
+  openGhostNode: (name: string, vaultPath: string, template?: string) => void;
+  clearPendingGhostFile: () => void;
+  addLogEntry: (text: string) => void;
+  clearLog: () => void;
+  setLogDrawerOpen: (v: boolean) => void;
 }
+
+let _logId = 0;
 
 export const useStore = create<AppState>((set) => ({
   config: null,
@@ -78,6 +102,7 @@ export const useStore = create<AppState>((set) => ({
   projectTree: [],
   activeTab: "kb",
   graphMode: false,
+  kbViewMode: "brain",
   openFilePath: null,
   openFileContent: null,
   searchQuery: "",
@@ -85,6 +110,15 @@ export const useStore = create<AppState>((set) => ({
   terminalBanner: null,
   chatHistory: [],
   scrollToTerminalLine: null,
+  isThinking: false,
+
+  analysisMode: false,
+  analysisRunning: false,
+  graphHighlights: [],
+  ghostNodes: [] as { name: string; template: string }[],
+  pendingGhostFile: null,
+  logEntries: [],
+  logDrawerOpen: false,
 
   setConfig: (c) => set({ config: c }),
   setConfigLoaded: (v) => set({ configLoaded: v }),
@@ -93,6 +127,7 @@ export const useStore = create<AppState>((set) => ({
   setProjectTree: (t) => set({ projectTree: t }),
   setActiveTab: (t) => set({ activeTab: t }),
   setGraphMode: (v) => set({ graphMode: v }),
+  setKbViewMode: (m) => set({ kbViewMode: m }),
   setOpenFile: (path, content) => set({ openFilePath: path, openFileContent: content }),
   setSearchQuery: (q) => set({ searchQuery: q }),
   setPanelRatio: (r) => set({ panelRatio: r }),
@@ -100,4 +135,30 @@ export const useStore = create<AppState>((set) => ({
   addHistoryEntry: (entry) => set((s) => ({ chatHistory: [...s.chatHistory, entry] })),
   clearHistory: () => set({ chatHistory: [] }),
   setScrollToTerminalLine: (fn) => set({ scrollToTerminalLine: fn }),
+  setIsThinking: (v) => set({ isThinking: v }),
+
+  setAnalysisMode: (v) => set({ analysisMode: v }),
+  setAnalysisRunning: (v) => set({ analysisRunning: v }),
+  setGraphHighlights: (nodes) => set({ graphHighlights: nodes }),
+  clearGraphHighlights: () => set({ graphHighlights: [], ghostNodes: [] }),
+  setGhostNodes: (nodes) => set({ ghostNodes: nodes }),
+  clearGhostNodes: () => set({ ghostNodes: [] }),
+  openGhostNode: (name, vaultPath, template) => {
+    const filePath = `${vaultPath}/${name.replace(/\s+/g, "_")}.md`;
+    const content = template ?? `# ${name}\n\n`;
+    set({
+      openFilePath: filePath,
+      openFileContent: content,
+      graphMode: false,
+      activeTab: "kb",
+      kbViewMode: "files",
+      pendingGhostFile: { name, template: content },
+    });
+  },
+  clearPendingGhostFile: () => set({ pendingGhostFile: null }),
+  addLogEntry: (text) => set((s) => ({
+    logEntries: [...s.logEntries.slice(-200), { id: _logId++, text, ts: Date.now() }],
+  })),
+  clearLog: () => set({ logEntries: [] }),
+  setLogDrawerOpen: (v) => set({ logDrawerOpen: v }),
 }));

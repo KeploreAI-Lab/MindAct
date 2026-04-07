@@ -1,5 +1,5 @@
 {
-  "name": "physmind-app",
+  "name": "mindact",
   "version": "1.0.0",
   "type": "module",
   "scripts": {
@@ -9,6 +9,7 @@
     "start": "bun run build && bun run server.ts"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.82.0",
     "node-pty": "^1.0.0"
   },
   "devDependencies": {

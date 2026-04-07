@@ -1,9 +1,12 @@
 'use strict';
-const { contextBridge, clipboard } = require('electron');
+const { contextBridge, clipboard, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('electronAPI', {
-  // Returns array of absolute file paths currently in the clipboard (macOS Finder copy)
   getClipboardFilePaths: () => {
     try { return clipboard.readFilePaths(); } catch { return []; }
   },
+  pickFolder: () => ipcRenderer.invoke('show-open-dialog', {
+    properties: ['openDirectory', 'createDirectory'],
+    title: '选择文件夹',
+  }),
 });

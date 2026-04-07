@@ -43,7 +43,7 @@ export default function SetupDialog({ onSave }: Props) {
         boxShadow: "0 8px 32px rgba(0,0,0,0.5)",
       }}>
         <div style={{ marginBottom: 8, color: "#007acc", fontSize: 22, fontWeight: 700, letterSpacing: 1 }}>
-          PhysMind
+          MindAct
         </div>
         <div style={{ color: "#888", marginBottom: 28, fontSize: 13 }}>
           Welcome! Configure your vault and project paths to get started.

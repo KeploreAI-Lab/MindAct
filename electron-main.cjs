@@ -1,11 +1,11 @@
-const { app, BrowserWindow, session } = require('electron');
+const { app, BrowserWindow, session, ipcMain, dialog } = require('electron');
 const path = require('path');
 
 function createWindow() {
   const win = new BrowserWindow({
     width: 1400,
     height: 900,
-    title: 'PhysMind',
+    title: 'MindAct',
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
@@ -34,7 +34,14 @@ function createWindow() {
   win.on('closed', () => { app.quit(); });
 }
 
-app.on('ready', createWindow);
+app.on('ready', () => {
+  ipcMain.handle('show-open-dialog', async (event, options) => {
+    const win = BrowserWindow.getFocusedWindow();
+    const result = await dialog.showOpenDialog(win, options);
+    return result;
+  });
+  createWindow();
+});
 app.on('window-all-closed', () => { app.quit(); });
 app.on('activate', () => {
   if (BrowserWindow.getAllWindows().length === 0) createWindow();

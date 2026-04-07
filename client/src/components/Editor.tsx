@@ -18,6 +18,7 @@ interface Props {
   vaultFiles?: TreeNode[];
   platformFiles?: TreeNode[];
   onSave?: (content: string) => void;
+  onContentChange?: (content: string) => void;
   onLinkClick?: (name: string) => void;
   onCrossLinkClick?: (name: string) => void;
 }
@@ -76,7 +77,7 @@ const linkStyles = EditorView.baseTheme({
   },
 });
 
-export default function Editor({ path, content, readOnly, vaultFiles, platformFiles, onSave, onLinkClick, onCrossLinkClick }: Props) {
+export default function Editor({ path, content, readOnly, vaultFiles, platformFiles, onSave, onContentChange, onLinkClick, onCrossLinkClick }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -137,11 +138,13 @@ export default function Editor({ path, content, readOnly, vaultFiles, platformFi
       buildLinkPlugin(),
       linkStyles,
       EditorView.updateListener.of((update) => {
-        if (update.docChanged && !readOnly && onSave) {
-          if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
-          saveTimerRef.current = setTimeout(() => {
-            onSave(update.state.doc.toString());
-          }, 800);
+        if (update.docChanged && !readOnly) {
+          const text = update.state.doc.toString();
+          onContentChange?.(text);
+          if (onSave) {
+            if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+            saveTimerRef.current = setTimeout(() => onSave(text), 800);
+          }
         }
       }),
     ];

@@ -3,6 +3,8 @@ import { Terminal as XTerm } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import "@xterm/xterm/css/xterm.css";
 import { useStore } from "../store";
+import type { AnalysisReport } from "../types/analysis";
+import DependencyReport from "./DependencyReport";
 
 function stripAnsi(s: string): string {
   return s.replace(/\x1B\[[\d;]*[A-Za-z]/g, "").replace(/\x1B[()][AB012]/g, "").replace(/\x1B./g, "");
@@ -11,7 +13,17 @@ function stripAnsi(s: string): string {
 function Terminal() {
   const terminalBanner = useStore(s => s.terminalBanner);
   const setTerminalBanner = useStore(s => s.setTerminalBanner);
-  const { addHistoryEntry, setScrollToTerminalLine } = useStore.getState();
+  const { addHistoryEntry, setScrollToTerminalLine, setIsThinking } = useStore.getState();
+
+  const analysisMode = useStore(s => s.analysisMode);
+  const analysisRunning = useStore(s => s.analysisRunning);
+  const analysisModeRef = useRef(analysisMode);
+  const analysisRunningRef = useRef(analysisRunning);
+  useEffect(() => { analysisModeRef.current = analysisMode; }, [analysisMode]);
+  useEffect(() => { analysisRunningRef.current = analysisRunning; }, [analysisRunning]);
+  const { setAnalysisMode, setAnalysisRunning, addLogEntry, clearLog, setGraphHighlights, clearGraphHighlights, setGhostNodes, clearGhostNodes, setLogDrawerOpen } = useStore.getState();
+
+  const [analysisReport, setAnalysisReport] = useState<AnalysisReport | null>(null);
 
   const containerRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<XTerm | null>(null);
@@ -22,9 +34,12 @@ function Terminal() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const outputBufferRef = useRef<string[]>([]);
   const flushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const thinkingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const [inputValue, setInputValue] = useState("");
   const composingRef = useRef(false); // track IME composition state
+  const lastAnalysisTaskRef = useRef<string>("");
+  const analysisAbortRef = useRef<AbortController | null>(null);
 
   // Auto-resize textarea height
   useLayoutEffect(() => {
@@ -72,6 +87,67 @@ function Terminal() {
     sendToPty("\r");
   }, [sendToPty, addHistoryEntry]);
 
+  const runDependencyAnalysis = useCallback(async (task: string) => {
+    lastAnalysisTaskRef.current = task;
+    analysisAbortRef.current?.abort();
+    const abort = new AbortController();
+    analysisAbortRef.current = abort;
+
+    setAnalysisRunning(true);
+    setAnalysisReport(null);
+    clearLog();
+    clearGraphHighlights();
+    clearGhostNodes();
+    setLogDrawerOpen(true);
+
+    try {
+      const res = await fetch("/api/dm/analyze", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ task }),
+        signal: abort.signal,
+      });
+
+      const reader = res.body!.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const parts = buffer.split("\n\n");
+        buffer = parts.pop() ?? "";
+        for (const part of parts) {
+          const line = part.replace(/^data: /, "").trim();
+          if (!line) continue;
+          try {
+            const event = JSON.parse(line) as { type: string; data: unknown };
+            if (event.type === "log") {
+              addLogEntry(event.data as string);
+            } else if (event.type === "highlight") {
+              const hl = event.data as { nodes: { id: string; status: "found" | "missing" }[] };
+              setGraphHighlights(hl.nodes);
+            } else if (event.type === "ghost") {
+              const gh = event.data as { nodes: { name: string; template: string }[] };
+              setGhostNodes(gh.nodes);
+            } else if (event.type === "report") {
+              setAnalysisReport(event.data as AnalysisReport);
+            }
+          } catch {}
+        }
+      }
+    } catch (err: any) {
+      if ((err as any)?.name === "AbortError") {
+        addLogEntry("⏹ Analysis stopped");
+      } else {
+        addLogEntry(`❌ Connection failed: ${err?.message}`);
+      }
+    } finally {
+      setAnalysisRunning(false);
+    }
+  }, []);
+
   const handleInputKeyDown = useCallback((e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && !e.shiftKey) {
       // Ignore Enter while IME is composing (e.g. selecting Chinese characters)
@@ -79,8 +155,14 @@ function Terminal() {
       e.preventDefault();
       const val = inputValue.trim();
       if (val) {
-        submitInput(val);
-        setInputValue("");
+        if (analysisModeRef.current && !analysisRunningRef.current) {
+          // Intercept: run dependency analysis before sending to Claude
+          runDependencyAnalysis(val);
+          setInputValue("");
+        } else {
+          submitInput(val);
+          setInputValue("");
+        }
       } else {
         // Empty Enter — forward raw \r so dialog confirmations / default selections work
         sendToPty("\r");
@@ -166,7 +248,7 @@ function Terminal() {
         fit.fit();
         // Tell PTY it has 3 fewer rows — Ink renders its input prompt in those rows,
         // which we cover with an overlay, hiding the duplicate prompt
-        ws.send(JSON.stringify({ type: "resize", cols: term.cols, rows: Math.max(5, term.rows - 12) }));
+        ws.send(JSON.stringify({ type: "resize", cols: term.cols, rows: Math.max(5, term.rows - 3) }));
       }
       setTimeout(() => textareaRef.current?.focus(), 100);
     };
@@ -177,6 +259,7 @@ function Terminal() {
         const term = termRef.current;
         if (!term) return;
         if (msg.type === "data") {
+
           // Buffer output for ~16ms so Ink's full re-render arrives as one batch,
           // preventing flicker from intermediate cursor-up/clear/redraw chunks
           outputBufferRef.current.push(msg.data);
@@ -280,6 +363,7 @@ function Terminal() {
       term.dispose();
       if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);
       if (flushTimerRef.current) clearTimeout(flushTimerRef.current);
+      if (thinkingTimerRef.current) clearTimeout(thinkingTimerRef.current);
       if (wsRef.current) wsRef.current.close();
       setScrollToTerminalLine(null);
     };
@@ -298,15 +382,23 @@ function Terminal() {
             borderRadius: 6, padding: "8px 12px", display: "flex", alignItems: "center",
             gap: 10, boxShadow: "0 2px 8px rgba(0,0,0,0.4)",
           }}>
-          <span style={{ fontSize: 13, color: "#89cff0", flex: 1 }}>
-            💡 在终端里执行：
-            <code style={{
-              marginLeft: 8, background: "#0d2137", padding: "2px 8px",
-              borderRadius: 4, fontFamily: "monospace", color: "#7dd3fc",
-              userSelect: "text", cursor: "text",
-            }}>{terminalBanner}</code>
-          </span>
-          <button onClick={() => navigator.clipboard.writeText(terminalBanner!)} style={smallBtnStyle}>复制</button>
+          {terminalBanner!.startsWith("!") ? (
+            <>
+              <span style={{ fontSize: 13, color: "#89cff0", flex: 1 }}>
+                💡 在终端里执行：
+                <code style={{
+                  marginLeft: 8, background: "#0d2137", padding: "2px 8px",
+                  borderRadius: 4, fontFamily: "monospace", color: "#7dd3fc",
+                  userSelect: "text", cursor: "text",
+                }}>{terminalBanner!.slice(1)}</code>
+              </span>
+              <button onClick={() => navigator.clipboard.writeText(terminalBanner!.slice(1))} style={smallBtnStyle}>复制</button>
+            </>
+          ) : (
+            <span style={{ fontSize: 13, color: "#4ec9b0", flex: 1 }}>
+              {terminalBanner}
+            </span>
+          )}
           <button onClick={() => setTerminalBanner(null)} style={{ background: "none", border: "none", color: "#89cff0", cursor: "pointer", fontSize: 18, lineHeight: 1, padding: "0 2px" }}>×</button>
         </div>
       )}
@@ -323,25 +415,54 @@ function Terminal() {
       <div style={{ flex: 1, overflow: "hidden", position: "relative" }} onClick={() => textareaRef.current?.focus()}>
         <div ref={containerRef} style={{ position: "absolute", inset: 0, padding: "4px 0 0 4px" }} />
         {/* Cover the bottom rows where Ink renders its own input prompt */}
-        <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, height: 240, background: "#1e1e1e", pointerEvents: "none" }} />
+        <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, height: 44, background: "#1e1e1e", pointerEvents: "none" }} />
       </div>
 
+      {/* Dependency Analysis Report (floats above input) */}
+      {analysisReport && (
+        <DependencyReport
+          report={analysisReport}
+          onExecute={(enrichedPrompt) => {
+            submitInput(enrichedPrompt);
+            setAnalysisReport(null);
+            clearGraphHighlights();
+          }}
+          onDismiss={() => {
+            setAnalysisReport(null);
+            clearGraphHighlights();
+          }}
+          onAddKnowledge={() => {
+            setAnalysisReport(null);
+            clearGraphHighlights();
+            clearGhostNodes();
+            if (lastAnalysisTaskRef.current) {
+              runDependencyAnalysis(lastAnalysisTaskRef.current);
+            }
+          }}
+        />
+      )}
+
       {/* Fixed multi-line input */}
-      <div style={{ flexShrink: 0, background: "#1e1e1e", padding: "12px 16px 14px" }}>
+      <div style={{ flexShrink: 0, background: "#1e1e1e", padding: "12px 16px 14px", position: "relative" }}>
         <div style={{
-          background: "#2a2a2a",
-          border: "1.5px solid #3a3a3a",
+          background: analysisMode ? "#1a1400" : "#2a2a2a",
+          border: `1.5px solid ${analysisMode ? "#c8a45a88" : "#3a3a3a"}`,
           borderRadius: 12,
           padding: "10px 14px",
           display: "flex", flexDirection: "column", gap: 8,
-          boxShadow: "0 0 0 1px #007acc22, 0 4px 24px #00000066",
-          transition: "border-color 0.15s",
+          boxShadow: analysisMode
+            ? "0 0 0 1px #c8a45a22, 0 4px 24px #c8a45a11"
+            : "0 0 0 1px #007acc22, 0 4px 24px #00000066",
+          transition: "border-color 0.2s, background 0.2s, box-shadow 0.2s",
         }}
-          onFocusCapture={e => (e.currentTarget.style.borderColor = "#007acc88")}
-          onBlurCapture={e => (e.currentTarget.style.borderColor = "#3a3a3a")}
+          onFocusCapture={e => (e.currentTarget.style.borderColor = analysisMode ? "#c8a45acc" : "#007acc88")}
+          onBlurCapture={e => (e.currentTarget.style.borderColor = analysisMode ? "#c8a45a88" : "#3a3a3a")}
         >
           <div style={{ display: "flex", alignItems: "flex-end", gap: 10 }}>
-            <span style={{ color: "#007acc", fontSize: 16, fontFamily: "monospace", flexShrink: 0, paddingBottom: 2 }}>❯</span>
+            <span style={{
+              color: analysisMode ? "#c8a45a" : "#007acc",
+              fontSize: 16, fontFamily: "monospace", flexShrink: 0, paddingBottom: 2,
+            }}>❯</span>
             <textarea
               ref={textareaRef}
               value={inputValue}
@@ -350,14 +471,16 @@ function Terminal() {
               onCompositionStart={() => { composingRef.current = true; }}
               onCompositionEnd={() => { composingRef.current = false; }}
               onPaste={handlePaste}
-              placeholder="给 Claude 发消息…"
+              placeholder={analysisMode ? "Enter task — dependencies will be analyzed automatically…" : "Message Claude…"}
               autoFocus
               rows={1}
               style={{
                 flex: 1, background: "transparent", border: "none", outline: "none",
-                color: "#e0e0e0", fontSize: 14, resize: "none", lineHeight: 1.6,
+                color: analysisMode ? "#e8d4a0" : "#e0e0e0",
+                fontSize: 14, resize: "none", lineHeight: 1.6,
                 fontFamily: "'JetBrains Mono', 'Fira Code', 'Cascadia Code', Menlo, Monaco, monospace",
-                caretColor: "#007acc", minHeight: 24, maxHeight: 200, overflowY: "auto",
+                caretColor: analysisMode ? "#c8a45a" : "#007acc",
+                minHeight: 24, maxHeight: 200, overflowY: "auto",
               }}
             />
           </div>
@@ -370,11 +493,73 @@ function Terminal() {
               onMouseLeave={e => (e.currentTarget.style.color = "#555")}
             >📎</button>
             <span style={{ flex: 1 }} />
-            <span style={{ color: "#3a3a3a", fontSize: 10 }}>Shift+Enter 换行 · Enter 发送</span>
+            {analysisRunning && (
+              <span style={{ fontSize: 10, color: "#c8a45a", animation: "fadeInOut 1.2s infinite" }}>
+                ⟳ Analyzing...
+              </span>
+            )}
+            {/* Stop button — sends Ctrl+C to PTY */}
+            <button
+              onClick={() => { sendToPty("\x03"); analysisAbortRef.current?.abort(); }}
+              title="Stop Agent (Ctrl+C)"
+              style={{
+                background: "none",
+                border: "1px solid #3a3a3a",
+                borderRadius: 4,
+                color: "#666",
+                cursor: "pointer",
+                fontSize: 10,
+                padding: "1px 7px",
+                display: "flex",
+                alignItems: "center",
+                gap: 3,
+                transition: "border-color 0.15s, color 0.15s",
+              }}
+              onMouseEnter={e => { e.currentTarget.style.borderColor = "#e05555"; e.currentTarget.style.color = "#e05555"; }}
+              onMouseLeave={e => { e.currentTarget.style.borderColor = "#3a3a3a"; e.currentTarget.style.color = "#666"; }}
+            >
+              ⏹ Stop
+            </button>
+            <span style={{ color: "#3a3a3a", fontSize: 10 }}>Shift+Enter new line · Enter send</span>
+            <button
+              onClick={() => {
+                setAnalysisMode(!analysisMode);
+                if (analysisMode) {
+                  clearGraphHighlights();
+                  setAnalysisReport(null);
+                }
+              }}
+              title={analysisMode ? "Disable analysis mode" : "Enable analysis mode"}
+              style={{
+                background: analysisMode ? "#c8a45a" : "none",
+                border: `1px solid ${analysisMode ? "#c8a45a" : "#3a3a3a"}`,
+                borderRadius: 20,
+                color: analysisMode ? "#1a1000" : "#555",
+                cursor: "pointer",
+                fontSize: 10,
+                fontWeight: 600,
+                padding: "2px 8px 2px 6px",
+                display: "flex",
+                alignItems: "center",
+                gap: 4,
+                letterSpacing: 0.3,
+                boxShadow: analysisMode ? "0 0 8px #c8a45a55" : "none",
+                transition: "all 0.2s",
+                whiteSpace: "nowrap",
+              }}
+            >
+              <span style={{ fontSize: 11 }}>⬡</span>
+              Analysis {analysisMode ? "ON" : "OFF"}
+            </button>
           </div>
         </div>
         <input ref={fileInputRef} type="file" style={{ display: "none" }} onChange={handleFileChange} />
+
       </div>
+
+      <style>{`
+        @keyframes fadeInOut { 0%,100%{opacity:1} 50%{opacity:0.4} }
+      `}</style>
     </div>
   );
 }

@@ -2,6 +2,10 @@ import { serve } from "bun";
 import { existsSync, mkdirSync, readdirSync, statSync, readFileSync, writeFileSync, unlinkSync } from "fs";
 import { join, extname, relative, basename } from "path";
 import { homedir } from "os";
+import { buildIndex, collectMdFiles, parseLinks, BRAIN_INDEX_PATH } from "./decision_manager/build_index";
+import { analyzeDependencies } from "./decision_manager/tasks/dependency_analysis";
+import { aiCall, FAST_MODEL } from "./decision_manager/ai_client";
+import { TEMPLATE_SYSTEM, buildTemplateMessage } from "./decision_manager/prompts/dependency_analysis";
 import { createRequire } from "module";
 // node-pty must be loaded via Node's require (not Bun's) because its native
 // addon uses posix_spawnp via spawn-helper, which Bun's loader breaks.
@@ -63,35 +67,6 @@ function buildTree(dir: string, exts?: string[], depth = 0, maxDepth = 4): TreeN
     }
   }
   return nodes;
-}
-
-function collectMdFiles(dir: string): string[] {
-  const files: string[] = [];
-  function walk(d: string) {
-    let entries: string[];
-    try { entries = readdirSync(d); } catch { return; }
-    for (const name of entries) {
-      if (name.startsWith(".")) continue;
-      const full = join(d, name);
-      let stat;
-      try { stat = statSync(full); } catch { continue; }
-      if (stat.isDirectory()) walk(full);
-      else if (name.endsWith(".md")) files.push(full);
-    }
-  }
-  walk(dir);
-  return files;
-}
-
-function parseLinks(content: string): string[] {
-  // Matches both [[wiki]] and {{ cross }} links
-  const re = /\[\[([^\]]+)\]\]|\{\{([^}]+)\}\}/g;
-  const links: string[] = [];
-  let m;
-  while ((m = re.exec(content)) !== null) {
-    links.push((m[1] || m[2]).trim());
-  }
-  return links;
 }
 
 function corsHeaders() {
@@ -188,6 +163,7 @@ function spawnPty(ws: import("bun").ServerWebSocket<unknown>, projectPath: strin
 
 const server = serve({
   port: PORT,
+  idleTimeout: 0,
   async fetch(req, server) {
     const url = new URL(req.url);
 
@@ -276,6 +252,67 @@ const server = serve({
     }
 
     // Combined graph: private vault + platform, with cross-section edges
+    // ── BrainIndex ──────────────────────────────────────────────────────────
+    if (url.pathname === "/api/brain-index" && req.method === "GET") {
+      if (!existsSync(BRAIN_INDEX_PATH)) return jsonResponse({ content: null });
+      return jsonResponse({ content: readFileSync(BRAIN_INDEX_PATH, "utf-8") });
+    }
+
+    if (url.pathname === "/api/brain-index" && req.method === "PUT") {
+      return req.json().then((body: { content: string }) => {
+        writeFileSync(BRAIN_INDEX_PATH, body.content, "utf-8");
+        return jsonResponse({ ok: true });
+      });
+    }
+
+    if (url.pathname === "/api/brain-index/generate" && req.method === "POST") {
+      const cfg = readConfig();
+      const content = buildIndex({ vaultPath: cfg?.vault_path || "" });
+      return jsonResponse({ content });
+    }
+
+    // Load platform content from a local directory
+    if (url.pathname === "/api/platform/load-local" && req.method === "POST") {
+      return req.json().then((body: { path: string }) => {
+        const srcDir = body.path?.trim();
+        if (!srcDir || !existsSync(srcDir)) return errorResponse("目录不存在：" + srcDir);
+        const platformDir = join(homedir(), ".physmind", "platform");
+        if (!existsSync(platformDir)) mkdirSync(platformDir, { recursive: true });
+        const mdFiles = collectMdFiles(srcDir);
+        const copied: string[] = [];
+        for (const f of mdFiles) {
+          const rel = relative(srcDir, f);
+          const dest = join(platformDir, rel);
+          const destDir = join(dest, "..");
+          if (!existsSync(destDir)) mkdirSync(destDir, { recursive: true });
+          writeFileSync(dest, readFileSync(f));
+          copied.push(rel);
+        }
+        return jsonResponse({ ok: true, count: copied.length, files: copied });
+      });
+    }
+
+    // Load platform content from a URL
+    if (url.pathname === "/api/platform/load-url" && req.method === "POST") {
+      return req.json().then(async (body: { url: string }) => {
+        try {
+          const res = await fetch(body.url);
+          if (!res.ok) return errorResponse("fetch failed: " + res.status);
+          const text = await res.text();
+          const platformDir = join(homedir(), ".physmind", "platform");
+          if (!existsSync(platformDir)) mkdirSync(platformDir, { recursive: true });
+          // Derive filename from URL
+          const urlObj = new URL(body.url);
+          const name = basename(urlObj.pathname).replace(/[^a-z0-9_\-\.]/gi, "_") || "loaded.md";
+          const filePath = join(platformDir, name.endsWith(".md") ? name : name + ".md");
+          writeFileSync(filePath, text, "utf-8");
+          return jsonResponse({ ok: true, path: filePath, name });
+        } catch (e: any) {
+          return errorResponse(e.message);
+        }
+      });
+    }
+
     if (url.pathname === "/api/graph/all") {
       const vaultPath = url.searchParams.get("path") || readConfig()?.vault_path || "";
       const platformDir = join(homedir(), ".physmind", "platform");
@@ -315,7 +352,7 @@ const server = serve({
     // Inject a system message into all active PTY sessions
     if (url.pathname === "/api/pty/notify" && req.method === "POST") {
       return req.json().then((body: { text: string }) => {
-        const msg = `\r\n\x1b[36m[PhysMind] ${body.text}\x1b[0m\r\n`;
+        const msg = `\r\n\x1b[36m[MindAct] ${body.text}\x1b[0m\r\n`;
         for (const [ws] of ptySessions) {
           try { ws.send(JSON.stringify({ type: "data", data: msg })); } catch {}
         }
@@ -329,7 +366,7 @@ const server = serve({
         for (const [ws] of ptySessions) {
           try {
             if (body.text) {
-              ws.send(JSON.stringify({ type: "data", data: `\r\n\x1b[36m[PhysMind] ${body.text}\x1b[0m\r\n` }));
+              ws.send(JSON.stringify({ type: "data", data: `\r\n\x1b[36m[MindAct] ${body.text}\x1b[0m\r\n` }));
             }
             // Small delay so the message renders before restart clears
             setTimeout(() => spawnPty(ws, body.cwd), 300);
@@ -384,6 +421,57 @@ const server = serve({
       return jsonResponse({ path: filePath });
     }
 
+    // Platform marketplace — search available modules
+    if (url.pathname === "/api/platform/search") {
+      const q = (url.searchParams.get("q") || "").toLowerCase().trim();
+      const catalog = [
+        { id: "control_theory", name: "Control Theory", tags: ["PID", "MPC", "LQR", "控制", "control"], description: "经典控制理论：PID、LQR、MPC 决策依赖图谱" },
+        { id: "computer_vision", name: "Computer Vision", tags: ["vision", "YOLO", "detection", "视觉", "目标检测"], description: "目标检测与视觉感知决策依赖" },
+        { id: "slam", name: "SLAM", tags: ["slam", "localization", "mapping", "定位", "建图"], description: "同步定位与建图的算法依赖链" },
+        { id: "motion_planning", name: "Motion Planning", tags: ["planning", "trajectory", "轨迹", "规划"], description: "运动规划算法：A*、RRT*、轨迹优化" },
+        { id: "deep_learning", name: "Deep Learning", tags: ["neural", "training", "深度学习", "神经网络", "训练"], description: "深度学习训练流程与超参数依赖" },
+        { id: "ros", name: "ROS / ROS2", tags: ["ros", "middleware", "中间件", "通信"], description: "ROS2 架构与节点通信决策依赖" },
+        { id: "embedded", name: "Embedded Systems", tags: ["embedded", "RTOS", "嵌入式", "实时"], description: "嵌入式系统与 RTOS 决策约束" },
+        { id: "simulation", name: "Simulation & Digital Twin", tags: ["simulation", "digital twin", "仿真", "数字孪生"], description: "仿真环境搭建与数字孪生依赖" },
+        { id: "data_pipeline", name: "Data Pipeline", tags: ["data", "pipeline", "数据", "流水线", "ETL"], description: "数据采集、清洗、标注流水线依赖" },
+        { id: "safety", name: "Safety & Reliability", tags: ["safety", "fault", "安全", "可靠性", "故障"], description: "功能安全与故障模式分析（FMEA）" },
+        { id: "cloud_deploy", name: "Cloud Deployment", tags: ["cloud", "deploy", "kubernetes", "云", "部署", "k8s"], description: "云端部署与容器化决策依赖" },
+        { id: "hardware_selection", name: "Hardware Selection", tags: ["hardware", "GPU", "sensor", "硬件", "传感器", "选型"], description: "硬件选型决策：GPU、传感器、计算平台" },
+      ];
+      const results = q
+        ? catalog.filter(m => m.name.toLowerCase().includes(q) || m.tags.some(t => t.toLowerCase().includes(q)) || m.description.includes(q))
+        : catalog;
+      const platformDir = join(homedir(), ".physmind", "platform");
+      const installed = existsSync(platformDir) ? readdirSync(platformDir).map(f => f.replace(".md", "")) : [];
+      return jsonResponse(results.map(m => ({ ...m, installed: installed.includes(m.id) })));
+    }
+
+    // Platform marketplace — install a module
+    if (url.pathname === "/api/platform/install" && req.method === "POST") {
+      return req.json().then((body: { id: string }) => {
+        const platformDir = join(homedir(), ".physmind", "platform");
+        if (!existsSync(platformDir)) mkdirSync(platformDir, { recursive: true });
+        const templates: Record<string, string> = {
+          control_theory: `# Control Theory — Decision Dependency\n\n## PID Control\n- **比例项 (P)**: 响应速度 vs 超调量\n- **积分项 (I)**: 消除稳态误差，引入积分饱和风险\n- **微分项 (D)**: 抑制超调，对噪声敏感\n\n## Decision Table\n| 控制目标 | 推荐方法 | 约束 |\n|---------|---------|------|\n| 稳定关节 | PID | 带宽 < 传感器采样率/4 |\n| 动态轨迹 | MPC | 计算延迟 < 控制周期 |\n| 最优调节 | LQR | 系统需线性化 |\n\n## Links\n- {{ algorithms }} — 数值求解器\n- {{ physics }} — 动力学方程\n`,
+          computer_vision: `# Computer Vision — Decision Dependency\n\n## Detection Pipeline\n- **预处理**: 分辨率 vs 推理延迟\n- **主干网络**: 精度 vs FPS 权衡\n- **后处理**: NMS 阈值影响 recall/precision\n\n## Decision Table\n| 场景 | 模型 | 约束 |\n|------|------|------|\n| 实时检测 | YOLOv8n | FPS > 30 |\n| 高精度 | YOLOv8x | 延迟 < 100ms |\n| 边缘部署 | MobileNet | RAM < 512MB |\n\n## Links\n- {{ algorithms }} — 搜索与优化\n- {{ system_design }} — 部署架构\n`,
+          slam: `# SLAM — Decision Dependency\n\n## Core Components\n- **前端**: 特征提取精度 vs 计算速度\n- **后端**: 图优化收敛性 vs 内存\n- **回环检测**: 误报率 vs 漏报率\n\n## Decision Table\n| 环境 | 方案 | 传感器 |\n|------|------|--------|\n| 室内 | ORB-SLAM3 | 单目/双目 |\n| 室外 | LIO-SAM | LiDAR+IMU |\n| 水下 | 声学SLAM | 声纳 |\n\n## Links\n- {{ physics }} — 运动学模型\n- {{ algorithms }} — 图优化\n`,
+          motion_planning: `# Motion Planning — Decision Dependency\n\n## Planning Hierarchy\n- **全局规划**: 最优性 vs 计算时间\n- **局部规划**: 避障实时性 vs 平滑度\n- **轨迹优化**: 动力学可行性约束\n\n## Decision Table\n| 问题类型 | 算法 | 权衡 |\n|---------|------|------|\n| 全局路径 | A* | 内存 vs 最优性 |\n| 高维空间 | RRT* | 完备性 vs 最优性 |\n| 实时重规划 | D* Lite | 增量更新 |\n\n## Links\n- {{ algorithms }} — 搜索算法\n- {{ robots }} — 机器人约束\n`,
+          deep_learning: `# Deep Learning — Decision Dependency\n\n## Training Pipeline\n- **数据**: 量 vs 质量 vs 多样性\n- **架构**: 参数量 vs 表达能力\n- **训练**: 学习率、批大小、优化器\n\n## Decision Table\n| 决策点 | 选项 | 依赖条件 |\n|--------|------|----------|\n| 优化器 | AdamW | 默认首选 |\n| 学习率调度 | Cosine | 训练轮数 > 100 |\n| 混合精度 | FP16 | GPU 支持 Tensor Core |\n\n## Links\n- {{ system_design }} — 训练基础设施\n- {{ data_pipeline }} — 数据来源\n`,
+          ros: `# ROS / ROS2 — Decision Dependency\n\n## Architecture Decisions\n- **节点粒度**: 细粒度 vs 延迟开销\n- **通信方式**: Topic vs Service vs Action\n- **QoS 策略**: 可靠 vs 尽力传输\n\n## Decision Table\n| 场景 | 通信模式 | QoS |\n|------|---------|-----|\n| 传感器流 | Topic | Best Effort |\n| 控制指令 | Service | Reliable |\n| 长时任务 | Action | Reliable |\n\n## Links\n- {{ system_design }} — 系统架构\n- {{ robots }} — 机器人集成\n`,
+          embedded: `# Embedded Systems — Decision Dependency\n\n## RTOS Decisions\n- **调度策略**: 实时性 vs 公平性\n- **内存管理**: 静态 vs 动态分配\n- **中断处理**: 延迟 vs 吞吐量\n\n## Decision Table\n| 需求 | 方案 | 约束 |\n|------|------|------|\n| 硬实时 | FreeRTOS | 响应 < 1ms |\n| 软实时 | Linux RT | 响应 < 10ms |\n| 超低功耗 | Bare Metal | 无OS开销 |\n\n## Links\n- {{ hardware_selection }} — 平台选型\n- {{ control_theory }} — 控制周期\n`,
+          simulation: `# Simulation & Digital Twin — Decision Dependency\n\n## Sim-to-Real Gap\n- **物理引擎精度** vs 仿真速度\n- **传感器模型** vs 真实噪声\n- **域随机化** vs 过拟合风险\n\n## Decision Table\n| 用途 | 仿真器 | 精度 |\n|------|--------|------|\n| 机器人 | Isaac Sim | 高 |\n| 自动驾驶 | CARLA | 高 |\n| 快速原型 | PyBullet | 中 |\n\n## Links\n- {{ physics }} — 物理建模\n- {{ deep_learning }} — Sim2Real 训练\n`,
+          data_pipeline: `# Data Pipeline — Decision Dependency\n\n## Pipeline Stages\n- **采集**: 采样率 vs 存储成本\n- **清洗**: 自动化 vs 人工审核\n- **标注**: 速度 vs 精度 vs 成本\n\n## Decision Table\n| 阶段 | 工具 | 瓶颈 |\n|------|------|------|\n| 标注 | Label Studio | 人力 |\n| 存储 | HDF5/Parquet | IO 带宽 |\n| 版本控制 | DVC | 数据追溯 |\n\n## Links\n- {{ deep_learning }} — 训练数据需求\n- {{ system_design }} — 存储架构\n`,
+          safety: `# Safety & Reliability — Decision Dependency\n\n## Safety Standards\n- **ISO 26262**: 汽车功能安全\n- **IEC 61508**: 工业安全完整性等级\n- **FMEA**: 故障模式与影响分析\n\n## Decision Table\n| 安全等级 | 要求 | 验证方法 |\n|---------|------|----------|\n| SIL 1 | 10⁻⁵/h 失效率 | 软件测试 |\n| SIL 2 | 10⁻⁶/h 失效率 | 形式验证 |\n| SIL 3 | 10⁻⁷/h 失效率 | 多重冗余 |\n\n## Links\n- {{ system_design }} — 冗余架构\n- {{ hardware_selection }} — 可靠性指标\n`,
+          cloud_deploy: `# Cloud Deployment — Decision Dependency\n\n## Deployment Strategy\n- **容器化**: Docker 镜像一致性\n- **编排**: Kubernetes 弹性伸缩\n- **CI/CD**: 自动化测试与发布\n\n## Decision Table\n| 场景 | 策略 | 权衡 |\n|------|------|------|\n| 无状态服务 | Deployment | 弹性扩容 |\n| 有状态服务 | StatefulSet | 数据持久化 |\n| GPU 推理 | DaemonSet | 资源独占 |\n\n## Links\n- {{ system_design }} — 架构设计\n- {{ data_pipeline }} — 数据流\n`,
+          hardware_selection: `# Hardware Selection — Decision Dependency\n\n## Selection Criteria\n- **计算平台**: TOPS vs 功耗 vs 成本\n- **传感器**: 精度 vs 频率 vs 接口\n- **存储**: 带宽 vs 容量 vs 可靠性\n\n## Decision Table\n| 场景 | 平台 | 功耗 |\n|------|------|------|\n| 边缘推理 | Jetson Orin | 15-60W |\n| 云端训练 | A100 | 400W |\n| 移动机器人 | Jetson Nano | 5-10W |\n\n## Links\n- {{ embedded }} — 实时约束\n- {{ deep_learning }} — 推理需求\n`,
+        };
+        const content = templates[body.id] || `# ${body.id}\n\n待补充内容。\n`;
+        const filePath = join(platformDir, `${body.id}.md`);
+        writeFileSync(filePath, content, "utf-8");
+        return jsonResponse({ ok: true, path: filePath });
+      });
+    }
+
     if (url.pathname === "/api/platform/tree") {
       const platformDir = join(homedir(), ".physmind", "platform");
       if (!existsSync(platformDir)) mkdirSync(platformDir, { recursive: true });
@@ -405,6 +493,73 @@ const server = serve({
       return jsonResponse(tree);
     }
 
+    if (url.pathname === "/api/project/file") {
+      if (req.method === "GET") {
+        const filePath = url.searchParams.get("path") || "";
+        if (!filePath || !existsSync(filePath)) return errorResponse("file not found");
+        const content = readFileSync(filePath, "utf-8");
+        return jsonResponse({ content });
+      }
+      if (req.method === "PUT") {
+        const { path: filePath, content } = await req.json() as { path: string; content: string };
+        if (!filePath) return errorResponse("missing path");
+        writeFileSync(filePath, content, "utf-8");
+        return jsonResponse({ ok: true });
+      }
+    }
+
+    // ── AI suggest template for ghost file ──────────────────────────────────
+    if (url.pathname === "/api/dm/suggest-template" && req.method === "POST") {
+      const { name, currentContent } = await req.json() as { name: string; currentContent: string };
+      try {
+        const content = await aiCall({
+          system: TEMPLATE_SYSTEM,
+          messages: [{ role: "user", content: `${buildTemplateMessage(name, currentContent || name, name)}\n\n现有草稿（如有）：\n${currentContent}` }],
+          model: FAST_MODEL,
+          maxTokens: 1200,
+        });
+        return jsonResponse({ content });
+      } catch (err: any) {
+        return jsonResponse({ error: err?.message }, 500);
+      }
+    }
+
+    // ── Dependency Analysis (SSE streaming) ─────────────────────────────────
+    if (url.pathname === "/api/dm/analyze" && req.method === "POST") {
+      const { task } = await req.json() as { task: string };
+      const cfg = readConfig();
+      const vaultPath = cfg?.vault_path || "";
+
+      const encoder = new TextEncoder();
+      const stream = new ReadableStream({
+        async start(controller) {
+          const send = (event: object) => {
+            controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
+          };
+          try {
+            await analyzeDependencies({
+              task,
+              vaultPath,
+              onEvent: (event) => send(event),
+            });
+          } catch (err: any) {
+            send({ type: "error", data: err?.message ?? String(err) });
+          } finally {
+            controller.close();
+          }
+        },
+      });
+
+      return new Response(stream, {
+        headers: {
+          "Content-Type": "text/event-stream",
+          "Cache-Control": "no-cache",
+          "Connection": "keep-alive",
+          "Access-Control-Allow-Origin": "*",
+        },
+      });
+    }
+
     // Serve static files from client/dist
     const distDir = join(import.meta.dir, "client", "dist");
     if (existsSync(distDir)) {
@@ -418,7 +573,7 @@ const server = serve({
       }
     }
 
-    return new Response("PhysMind server running. Start client with: cd client && bun run dev", {
+    return new Response("MindAct server running. Start client with: cd client && bun run dev", {
       headers: corsHeaders(),
     });
   },
@@ -453,4 +608,4 @@ const server = serve({
   },
 });
 
-console.log(`PhysMind server running at http://localhost:${PORT}`);
+console.log(`MindAct server running at http://localhost:${PORT}`);
