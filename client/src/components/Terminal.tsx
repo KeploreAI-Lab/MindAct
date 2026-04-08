@@ -24,12 +24,20 @@ function Terminal() {
   const { setAnalysisMode, setAnalysisRunning, addLogEntry, clearLog, setGraphHighlights, clearGraphHighlights, setGhostNodes, clearGhostNodes, setLogDrawerOpen } = useStore.getState();
 
   const [analysisReport, setAnalysisReport] = useState<AnalysisReport | null>(null);
+  const [createdSkillPathForReport, setCreatedSkillPathForReport] = useState<string | null>(null);
+  const [skillDraftOpen, setSkillDraftOpen] = useState(false);
+  const [skillDraftName, setSkillDraftName] = useState("");
+  const [skillDraftContent, setSkillDraftContent] = useState("");
+  const [skillSaving, setSkillSaving] = useState(false);
+  const [skillTemplateLoading, setSkillTemplateLoading] = useState(false);
 
   const containerRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<XTerm | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const exitNoticeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const compatibilityModeRef = useRef(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const outputBufferRef = useRef<string[]>([]);
@@ -95,6 +103,7 @@ function Terminal() {
 
     setAnalysisRunning(true);
     setAnalysisReport(null);
+    setCreatedSkillPathForReport(null);
     clearLog();
     clearGraphHighlights();
     clearGhostNodes();
@@ -147,6 +156,64 @@ function Terminal() {
       setAnalysisRunning(false);
     }
   }, []);
+
+  const openSkillDraft = useCallback(async (report: AnalysisReport) => {
+    if (skillTemplateLoading) return;
+    setSkillTemplateLoading(true);
+    try {
+      addLogEntry("🧠 Generating skill template from current knowledge...");
+      const res = await fetch("/api/skills/generate-template", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          task: report.task,
+          domain: report.domain,
+          dependencies: report.dependencies,
+          foundFiles: report.foundFiles,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data?.content) {
+        addLogEntry(`❌ Skill template generation failed: ${data?.error ?? "unknown error"}`);
+        return;
+      }
+      const suggested = report.domain && report.domain !== "skill" ? `${report.domain}-skill` : "generated-skill";
+      setSkillDraftName(suggested);
+      setSkillDraftContent(data.content);
+      setSkillDraftOpen(true);
+    } catch (err: any) {
+      addLogEntry(`❌ Skill template generation failed: ${err?.message ?? String(err)}`);
+    } finally {
+      setSkillTemplateLoading(false);
+    }
+  }, [skillTemplateLoading]);
+
+  const saveSkillDraft = useCallback(async () => {
+    if (!skillDraftName.trim() || !skillDraftContent.trim()) return;
+    setSkillSaving(true);
+    try {
+      const res = await fetch("/api/skills/save", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: skillDraftName, content: skillDraftContent }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data?.ok) {
+        addLogEntry(`❌ Skill save failed: ${data?.error ?? "unknown error"}`);
+        return;
+      }
+      addLogEntry(`✅ Skill saved: ${data.path}`);
+      setSkillDraftOpen(false);
+      setSkillDraftContent("");
+      setSkillDraftName("");
+      setCreatedSkillPathForReport(data.path);
+      setTerminalBanner(`✓ Skill saved: ${data.path}`);
+    } catch (err: any) {
+      addLogEntry(`❌ Skill save failed: ${err?.message ?? String(err)}`);
+    } finally {
+      setSkillSaving(false);
+    }
+  }, [skillDraftName, skillDraftContent]);
 
   const handleInputKeyDown = useCallback((e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && !e.shiftKey) {
@@ -242,23 +309,35 @@ function Terminal() {
     wsRef.current = ws;
 
     ws.onopen = () => {
+      if (wsRef.current !== ws) return;
+      compatibilityModeRef.current = false;
+      if (exitNoticeTimerRef.current) {
+        clearTimeout(exitNoticeTimerRef.current);
+        exitNoticeTimerRef.current = null;
+      }
       const term = termRef.current;
       const fit = fitAddonRef.current;
       if (term && fit) {
         fit.fit();
-        // Tell PTY it has 3 fewer rows — Ink renders its input prompt in those rows,
-        // which we cover with an overlay, hiding the duplicate prompt
-        ws.send(JSON.stringify({ type: "resize", cols: term.cols, rows: Math.max(5, term.rows - 3) }));
+        ws.send(JSON.stringify({ type: "resize", cols: term.cols, rows: Math.max(5, term.rows) }));
       }
       setTimeout(() => textareaRef.current?.focus(), 100);
     };
 
     ws.onmessage = (event) => {
+      if (wsRef.current !== ws) return;
       try {
         const msg = JSON.parse(event.data);
         const term = termRef.current;
         if (!term) return;
         if (msg.type === "data") {
+          if (typeof msg.data === "string" && msg.data.includes("PTY unavailable")) {
+            compatibilityModeRef.current = true;
+            if (exitNoticeTimerRef.current) {
+              clearTimeout(exitNoticeTimerRef.current);
+              exitNoticeTimerRef.current = null;
+            }
+          }
 
           // Buffer output for ~16ms so Ink's full re-render arrives as one batch,
           // preventing flicker from intermediate cursor-up/clear/redraw chunks
@@ -276,12 +355,19 @@ function Terminal() {
             t.write(data, () => { t.scrollToBottom(); });
           }, 16);
         } else if (msg.type === "exit") {
-          term.writeln("\r\n\x1b[33m[Process exited. Click Restart to reconnect.]\x1b[0m");
+          // Delay notice a bit; if compatibility fallback message arrives, suppress it.
+          if (exitNoticeTimerRef.current) clearTimeout(exitNoticeTimerRef.current);
+          exitNoticeTimerRef.current = setTimeout(() => {
+            if (!compatibilityModeRef.current) {
+              term.writeln("\r\n\x1b[33m[Process exited. Click Restart to reconnect.]\x1b[0m");
+            }
+          }, 800);
         }
       } catch {}
     };
 
     ws.onclose = () => {
+      if (wsRef.current !== ws) return;
       reconnectTimerRef.current = setTimeout(() => {
         if (wsRef.current?.readyState !== WebSocket.OPEN) connect();
       }, 3000);
@@ -317,7 +403,7 @@ function Terminal() {
       cursorStyle: "bar",
       cursorWidth: 0,       // zero-width: hides xterm's own cursor (Ink's prompt still visible as text)
       scrollback: 5000,
-      disableStdin: true,
+      disableStdin: false,
     });
 
     const fitAddon = new FitAddon();
@@ -339,9 +425,11 @@ function Terminal() {
 
     term.onResize(({ cols, rows }) => {
       if (wsRef.current?.readyState === WebSocket.OPEN) {
-        wsRef.current.send(JSON.stringify({ type: "resize", cols, rows: Math.max(5, rows - 3) }));
+        wsRef.current.send(JSON.stringify({ type: "resize", cols, rows: Math.max(5, rows) }));
       }
     });
+    // Let xterm forward raw keys directly to PTY so TUI navigation works.
+    term.onData((data) => sendToPty(data));
 
     connect();
 
@@ -362,6 +450,7 @@ function Terminal() {
       cursorStyle.remove();
       term.dispose();
       if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);
+      if (exitNoticeTimerRef.current) clearTimeout(exitNoticeTimerRef.current);
       if (flushTimerRef.current) clearTimeout(flushTimerRef.current);
       if (thinkingTimerRef.current) clearTimeout(thinkingTimerRef.current);
       if (wsRef.current) wsRef.current.close();
@@ -412,10 +501,8 @@ function Terminal() {
       </div>
 
       {/* xterm output — display only, disableStdin */}
-      <div style={{ flex: 1, overflow: "hidden", position: "relative" }} onClick={() => textareaRef.current?.focus()}>
+      <div style={{ flex: 1, overflow: "hidden", position: "relative" }} onClick={() => termRef.current?.focus()}>
         <div ref={containerRef} style={{ position: "absolute", inset: 0, padding: "4px 0 0 4px" }} />
-        {/* Cover the bottom rows where Ink renders its own input prompt */}
-        <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, height: 44, background: "#1e1e1e", pointerEvents: "none" }} />
       </div>
 
       {/* Dependency Analysis Report (floats above input) */}
@@ -425,10 +512,28 @@ function Terminal() {
           onExecute={(enrichedPrompt) => {
             submitInput(enrichedPrompt);
             setAnalysisReport(null);
+            setCreatedSkillPathForReport(null);
+            clearGraphHighlights();
+          }}
+          onExecuteRaw={(rawTask) => {
+            submitInput(rawTask);
+            setAnalysisReport(null);
+            setCreatedSkillPathForReport(null);
+            clearGraphHighlights();
+          }}
+          onApplyCreatedSkill={(rawTask) => {
+            const path = createdSkillPathForReport;
+            const prompt = path
+              ? `请优先应用刚创建的技能文件执行任务。\n技能文件：${path}\n\n任务：${rawTask}`
+              : rawTask;
+            submitInput(prompt);
+            setAnalysisReport(null);
+            setCreatedSkillPathForReport(null);
             clearGraphHighlights();
           }}
           onDismiss={() => {
             setAnalysisReport(null);
+            setCreatedSkillPathForReport(null);
             clearGraphHighlights();
           }}
           onAddKnowledge={() => {
@@ -439,7 +544,66 @@ function Terminal() {
               runDependencyAnalysis(lastAnalysisTaskRef.current);
             }
           }}
+          onCreateSkill={(report) => { openSkillDraft(report); }}
+          createdSkillReady={!!createdSkillPathForReport}
+          creatingSkill={skillTemplateLoading}
         />
+      )}
+
+      {skillDraftOpen && (
+        <div style={{
+          position: "absolute",
+          inset: 0,
+          background: "rgba(0,0,0,0.55)",
+          zIndex: 120,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          padding: 20,
+        }}>
+          <div style={{
+            width: "min(920px, 95%)",
+            height: "min(82vh, 760px)",
+            background: "#111118",
+            border: "1px solid #2a2a3a",
+            borderRadius: 10,
+            display: "flex",
+            flexDirection: "column",
+            overflow: "hidden",
+          }}>
+            <div style={{ padding: "10px 12px", borderBottom: "1px solid #242436", display: "flex", alignItems: "center", gap: 8 }}>
+              <span style={{ color: "#c8a45a", fontSize: 12, fontWeight: 600 }}>Skill Template</span>
+              <input
+                value={skillDraftName}
+                onChange={e => setSkillDraftName(e.target.value)}
+                placeholder="skill name"
+                style={{ marginLeft: "auto", width: 260, background: "#1a1a24", border: "1px solid #34344a", color: "#ddd", borderRadius: 4, padding: "4px 8px", fontSize: 12 }}
+              />
+            </div>
+            <textarea
+              value={skillDraftContent}
+              onChange={e => setSkillDraftContent(e.target.value)}
+              style={{
+                flex: 1,
+                background: "#0f0f16",
+                color: "#d4d4d4",
+                border: "none",
+                outline: "none",
+                resize: "none",
+                padding: 12,
+                fontSize: 12,
+                fontFamily: "'JetBrains Mono', Menlo, monospace",
+                lineHeight: 1.5,
+              }}
+            />
+            <div style={{ padding: "10px 12px", borderTop: "1px solid #242436", display: "flex", gap: 8, justifyContent: "flex-end" }}>
+              <button onClick={() => setSkillDraftOpen(false)} style={ghostBtnStyle}>Cancel</button>
+              <button onClick={saveSkillDraft} disabled={skillSaving} style={smallBtnStyle}>
+                {skillSaving ? "Saving..." : "Save to skills-test"}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* Fixed multi-line input */}
@@ -568,6 +732,16 @@ const smallBtnStyle: React.CSSProperties = {
   background: "#2d6a9f", border: "none", color: "#fff",
   cursor: "pointer", fontSize: 11, borderRadius: 3,
   padding: "3px 8px", flexShrink: 0,
+};
+
+const ghostBtnStyle: React.CSSProperties = {
+  background: "none",
+  border: "1px solid #444",
+  color: "#bbb",
+  cursor: "pointer",
+  fontSize: 11,
+  borderRadius: 3,
+  padding: "3px 10px",
 };
 
 export default React.memo(Terminal);

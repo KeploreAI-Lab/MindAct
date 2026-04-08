@@ -3,9 +3,9 @@
   "version": "1.0.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
-    "build": "tsc --noEmit && vite build",
-    "preview": "vite preview"
+    "dev": "bunx vite",
+    "build": "bunx tsc --noEmit && bunx vite build",
+    "preview": "bunx vite preview"
   },
   "dependencies": {
     "@codemirror/autocomplete": "^6.18.0",

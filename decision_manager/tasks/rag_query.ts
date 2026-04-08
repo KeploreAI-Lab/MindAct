@@ -6,7 +6,7 @@
 import { join } from "path";
 import { homedir } from "os";
 import { aiStream, aiCall, type ChatMessage } from "../ai_client";
-import { loadVaultFiles, retrieveContext } from "../graph_retrieval";
+import { loadVaultFiles, retrieveContext, type VaultFile } from "../graph_retrieval";
 import { SYSTEM_STRUCTURED_OUTPUT, buildRagUserMessage, RAG_NO_CONTEXT_MESSAGE } from "../prompts/index";
 
 export interface RagQueryParams {
@@ -36,7 +36,8 @@ export async function ragQuery(params: RagQueryParams): Promise<string> {
     return RAG_NO_CONTEXT_MESSAGE;
   }
 
-  const { files: contextFiles } = retrieveContext({ query: question, allFiles, topK: 5 });
+  const { files: retrieved } = retrieveContext({ query: question, allFiles, topK: 8 });
+  const contextFiles = trimContextByChars(retrieved, 10000);
 
   // 2. Build message
   const userMessage = buildRagUserMessage({
@@ -68,4 +69,16 @@ export async function ragQuery(params: RagQueryParams): Promise<string> {
     onDone?.(result);
     return result;
   }
+}
+
+function trimContextByChars(files: VaultFile[], budgetChars: number): VaultFile[] {
+  const selected: VaultFile[] = [];
+  let used = 0;
+  for (const f of files) {
+    const size = f.content.length;
+    if (selected.length > 0 && used + size > budgetChars) break;
+    selected.push(f);
+    used += size;
+  }
+  return selected;
 }

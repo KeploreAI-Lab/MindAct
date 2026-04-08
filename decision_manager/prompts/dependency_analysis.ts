@@ -88,26 +88,52 @@ export function computeConfidence(matches: {
   dependency: string;
   level: string;
   coverage: "full" | "partial" | "none";
-}[]): number {
+}[], options?: {
+  evidenceQuality?: number; // 0..1
+  noiseRatio?: number;      // 0..1 (higher = noisier)
+}): number {
   if (!matches.length) return 0;
 
-  let score = 0;
-  let total = 0;
+  // A) Coverage confidence (baseline)
+  let weightedCoverage = 0;
+  let totalWeight = 0;
 
   for (const m of matches) {
     const weight = m.level === "critical" ? 3 : 1;
-    const coverageScore = m.coverage === "full" ? 1 : m.coverage === "partial" ? 0.5 : 0;
-    score += coverageScore * weight;
-    total += weight;
+    const c = m.coverage === "full" ? 1 : m.coverage === "partial" ? 0.5 : 0;
+    weightedCoverage += c * weight;
+    totalWeight += weight;
   }
+  const coverageConfidence = totalWeight === 0 ? 0 : (weightedCoverage / totalWeight);
 
-  return total === 0 ? 0 : Math.round((score / total) * 100);
+  // B) Evidence quality (inspired by retrieval evaluators / calibration methods)
+  // Defaults are conservative when unavailable.
+  const evidenceQuality = clamp01(options?.evidenceQuality ?? 0.5);
+  const noisePenalty = clamp01(options?.noiseRatio ?? 0.3);
+
+  // Blend:
+  // - 70% coverage reliability
+  // - 25% evidence quality
+  // - 5% inverse noise
+  const blended =
+    0.70 * coverageConfidence +
+    0.25 * evidenceQuality +
+    0.05 * (1 - noisePenalty);
+
+  return Math.round(clamp01(blended) * 100);
 }
 
 export function confidenceLevel(score: number): "high" | "medium" | "low" {
   if (score >= CONFIDENCE_THRESHOLDS.HIGH) return "high";
   if (score >= CONFIDENCE_THRESHOLDS.MEDIUM) return "medium";
   return "low";
+}
+
+function clamp01(v: number): number {
+  if (!Number.isFinite(v)) return 0;
+  if (v < 0) return 0;
+  if (v > 1) return 1;
+  return v;
 }
 
 // ── Knowledge template generation ─────────────────────────────────────────
@@ -145,7 +171,9 @@ export function buildEnrichedPrompt(params: {
     ? `\n⚠️ 以下依赖知识未找到，请在推理中标注假设：\n${missingDeps.map(d => `- ${d}`).join("\n")}\n`
     : "";
 
-  return `以下是与当前任务相关的领域专项知识（来自 Decision Dependency Vault，执行可信度 ${confidence}%）：
+  const level = confidence >= 75 ? "高" : confidence >= 40 ? "中" : "低";
+
+  return `以下是与当前任务相关的领域专项知识（来自 Decision Dependency Vault，执行可信度等级 ${level}）：
 
 ${contextBlock}
 ${missingNote}

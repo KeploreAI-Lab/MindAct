@@ -31,6 +31,7 @@ export interface AiCallOptions {
   messages: ChatMessage[];
   model?: string;
   maxTokens?: number;
+  temperature?: number;
 }
 
 /** Single-turn or multi-turn non-streaming call. Returns full response text. */
@@ -39,6 +40,7 @@ export async function aiCall(opts: AiCallOptions): Promise<string> {
   const response = await client.messages.create({
     model: opts.model ?? DEFAULT_MODEL,
     max_tokens: opts.maxTokens ?? DEFAULT_MAX_TOKENS,
+    temperature: opts.temperature,
     system: opts.system,
     messages: opts.messages,
   });
@@ -60,6 +62,7 @@ export async function aiStream(opts: StreamCallOptions): Promise<void> {
   const stream = await client.messages.stream({
     model: opts.model ?? DEFAULT_MODEL,
     max_tokens: opts.maxTokens ?? DEFAULT_MAX_TOKENS,
+    temperature: opts.temperature,
     system: opts.system,
     messages: opts.messages,
   });

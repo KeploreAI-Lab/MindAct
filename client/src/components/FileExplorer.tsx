@@ -2,6 +2,7 @@ import React, { useState, useCallback } from "react";
 import { useStore, TreeNode } from "../store";
 import FileTree from "./FileTree";
 import Editor from "./Editor";
+import { t } from "../i18n";
 
 async function pickDir(): Promise<string | null> {
   const res = await fetch("/api/pick-dir");
@@ -16,7 +17,7 @@ async function checkDir(path: string): Promise<boolean> {
 }
 
 export default function FileExplorer() {
-  const { projectTree, config, setConfig, setProjectTree, setTerminalBanner } = useStore();
+  const { projectTree, config, setConfig, setProjectTree, setTerminalBanner, uiLanguage } = useStore();
   const [openFilePath, setOpenFilePath] = useState<string | null>(null);
   const [openFileContent, setOpenFileContent] = useState<string | null>(null);
   const [pathInput, setPathInput] = useState(config?.project_path ?? "");
@@ -41,7 +42,7 @@ export default function FileExplorer() {
     }
     setPathError(null);
     setCreating(false);
-    const newConfig = { ...(config ?? { vault_path: "", panel_ratio: 0.45 }), project_path: trimmed };
+    const newConfig = { ...(config ?? { vault_path: "", skills_path: "", panel_ratio: 0.45 }), project_path: trimmed };
     await fetch("/api/config", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(newConfig) });
     setConfig(newConfig);
     loadProject(trimmed);
@@ -84,7 +85,7 @@ export default function FileExplorer() {
       {/* ── Path Picker ── */}
       <div style={{ padding: "10px 10px 0", flexShrink: 0 }}>
         <div style={{ fontSize: 10, color: "#666", marginBottom: 4, textTransform: "uppercase", letterSpacing: 0.5 }}>
-          Project Path
+          {t(uiLanguage, "project_path")}
         </div>
         <div style={{ display: "flex", gap: 6 }}>
           <input
@@ -94,7 +95,7 @@ export default function FileExplorer() {
             placeholder="/path/to/your/project"
             style={inputStyle}
           />
-          <button onClick={handleBrowse} title="Browse" style={browseBtn}>
+          <button onClick={handleBrowse} title={t(uiLanguage, "browse")} style={browseBtn}>
             📁
           </button>
         </div>
@@ -102,13 +103,13 @@ export default function FileExplorer() {
           <div style={{ marginTop: 6, display: "flex", alignItems: "center", gap: 8 }}>
             <span style={{ fontSize: 11, color: "#e07b53" }}>{pathError}</span>
             {creating && (
-              <button onClick={handleCreateDir} style={smallBtn}>Create folder</button>
+              <button onClick={handleCreateDir} style={smallBtn}>{t(uiLanguage, "create_folder")}</button>
             )}
           </div>
         )}
         {pathInput && !pathError && pathInput !== config?.project_path && (
           <div style={{ marginTop: 6 }}>
-            <button onClick={() => saveProjectPath(pathInput)} style={smallBtn}>Apply</button>
+            <button onClick={() => saveProjectPath(pathInput)} style={smallBtn}>{t(uiLanguage, "apply")}</button>
           </div>
         )}
       </div>
@@ -119,7 +120,7 @@ export default function FileExplorer() {
         <input
           value={searchQuery}
           onChange={e => setSearchQuery(e.target.value)}
-          placeholder="Quick search files..."
+          placeholder={t(uiLanguage, "quick_search_files")}
           style={{ ...inputStyle, flex: 1 }}
         />
       </div>
@@ -128,10 +129,10 @@ export default function FileExplorer() {
       <div style={{ flex: openFilePath ? "0 0 40%" : "1", overflow: "auto" }}>
         {!config?.project_path ? (
           <div style={{ color: "#555", padding: "20px 16px", fontSize: 12, lineHeight: 1.6 }}>
-            Select a project folder above to browse your project files.
+            {t(uiLanguage, "select_project_folder_hint")}
           </div>
         ) : projectTree.length === 0 ? (
-          <div style={{ color: "#555", padding: 16, fontSize: 12 }}>No files found in this folder.</div>
+          <div style={{ color: "#555", padding: 16, fontSize: 12 }}>{t(uiLanguage, "no_files_found_folder")}</div>
         ) : (
           <FileTree nodes={projectTree} onFileClick={openFile} activeFile={openFilePath} filterQuery={searchQuery} />
         )}

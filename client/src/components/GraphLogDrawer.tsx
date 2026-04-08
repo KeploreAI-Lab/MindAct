@@ -1,5 +1,6 @@
 import React, { useEffect, useRef } from "react";
 import { useStore } from "../store";
+import { t } from "../i18n";
 
 export default function GraphLogDrawer() {
   const logEntries = useStore(s => s.logEntries);
@@ -8,6 +9,7 @@ export default function GraphLogDrawer() {
   const analysisRunning = useStore(s => s.analysisRunning);
   const ghostNodes = useStore(s => s.ghostNodes);
   const config = useStore(s => s.config);
+  const uiLanguage = useStore(s => s.uiLanguage);
   const bottomRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -58,7 +60,7 @@ export default function GraphLogDrawer() {
             }} />
           )}
           <span style={{ fontSize: 9, color: "#444", textTransform: "uppercase", letterSpacing: 1 }}>
-            Analysis Log
+            {t(uiLanguage, "analysis_log")}
           </span>
         </div>
 
@@ -70,7 +72,7 @@ export default function GraphLogDrawer() {
           fontFamily: "monospace",
         }}>
           {logEntries.length === 0 ? (
-            <div style={{ fontSize: 10, color: "#333" }}>Waiting for analysis...</div>
+            <div style={{ fontSize: 10, color: "#333" }}>{t(uiLanguage, "waiting_analysis")}</div>
           ) : (
             logEntries.map(entry => (
               <div key={entry.id} style={{
@@ -91,7 +93,7 @@ export default function GraphLogDrawer() {
       {/* Toggle button — below the panel */}
       <button
         onClick={() => setLogDrawerOpen(!logDrawerOpen)}
-        title={logDrawerOpen ? "Collapse log" : "Expand log"}
+        title={logDrawerOpen ? t(uiLanguage, "collapse") : t(uiLanguage, "log")}
         style={{
           pointerEvents: "auto",
           alignSelf: "flex-end",
@@ -110,7 +112,7 @@ export default function GraphLogDrawer() {
           transition: "color 0.2s",
         }}
       >
-        {logDrawerOpen ? "▲ Collapse" : "▼ Log"}
+        {logDrawerOpen ? `▲ ${t(uiLanguage, "collapse")}` : `▼ ${t(uiLanguage, "log")}`}
       </button>
 
       {/* Ghost nodes — missing deps, click to create */}
@@ -125,7 +127,7 @@ export default function GraphLogDrawer() {
           padding: "8px 10px",
         }}>
           <div style={{ fontSize: 9, color: "#e05555aa", textTransform: "uppercase", letterSpacing: 1, marginBottom: 6 }}>
-            Missing knowledge · click to create
+            {t(uiLanguage, "missing_knowledge_click_create")}
           </div>
           <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
             {ghostNodes.map(({ name, template }) => (

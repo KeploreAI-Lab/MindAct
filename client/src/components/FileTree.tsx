@@ -1,5 +1,7 @@
 import React, { useState, useEffect, useRef } from "react";
 import { TreeNode } from "../store";
+import { useStore } from "../store";
+import { t } from "../i18n";
 
 interface Props {
   nodes: TreeNode[];
@@ -38,7 +40,8 @@ function FileNode({ node, depth, onFileClick, onFileDelete, activeFile }: {
   onFileDelete?: (n: TreeNode) => void;
   activeFile?: string | null;
 }) {
-  const [open, setOpen] = useState(true);
+  const uiLanguage = useStore(s => s.uiLanguage);
+  const [open, setOpen] = useState(false);
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const isActive = node.path === activeFile;
@@ -114,7 +117,7 @@ function FileNode({ node, depth, onFileClick, onFileDelete, activeFile }: {
             onMouseEnter={e => (e.currentTarget.style.background = "#3a1a1a")}
             onMouseLeave={e => (e.currentTarget.style.background = "transparent")}
           >
-            🗑 删除文件
+            🗑 {t(uiLanguage, "delete_file")}
           </div>
         </div>
       )}

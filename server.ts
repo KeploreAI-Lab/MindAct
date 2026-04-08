@@ -19,13 +19,148 @@ const PORT = 3001;
 interface Config {
   vault_path: string;
   project_path: string;
+  skills_path: string;
   panel_ratio: number;
+}
+
+function slugifySkillName(name: string): string {
+  return name
+    .toLowerCase()
+    .trim()
+    .replace(/[^\w\u4e00-\u9fff-]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "") || `skill-${Date.now()}`;
+}
+
+function defaultSkillsRoot(): string {
+  return join(process.cwd(), "skills-test");
+}
+
+function buildFastSkillTemplate(params: {
+  task: string;
+  domain?: string;
+  dependencies?: { name: string; level: string; description?: string }[];
+  foundFiles?: string[];
+  referenceSkill?: string;
+}): string {
+  const domain = (params.domain || "general").trim();
+  const deps = params.dependencies || [];
+  const found = params.foundFiles || [];
+  const skillName = slugifySkillName(`${domain}-workflow-skill`);
+
+  const triggerHints = deps
+    .map(d => d.name)
+    .slice(0, 6)
+    .join(" / ");
+  const depChecklist = deps.length > 0
+    ? deps.map(d => `- [${d.level}] ${d.name}${d.description ? `: ${d.description}` : ""}`).join("\n")
+    : "- (TODO) Add required dependencies";
+  const contextFiles = found.length > 0
+    ? found.map(f => `- ${f}`).join("\n")
+    : "- (TODO) Add context files";
+  const referenceSnippet = (params.referenceSkill || "").trim();
+  const referenceSection = referenceSnippet
+    ? `\n## Reference Skill Pattern\nUse the following existing skill style as a structural reference:\n\n\`\`\`markdown\n${referenceSnippet}\n\`\`\`\n`
+    : "";
+
+  return `---
+name: ${skillName}
+description: Domain workflow skill for ${domain}. Use this skill when user requests tasks related to ${triggerHints || domain}, or asks to reuse a proven workflow in this domain.
+---
+
+# Purpose
+Capture a reusable execution workflow from validated knowledge/context, so repeated tasks are handled consistently.
+
+## Trigger Conditions
+- User asks for tasks in domain: ${domain}
+- User intent includes: ${triggerHints || "(TODO: add trigger keywords)"}
+- User asks for standardized or repeatable execution
+
+## Input
+- Task prompt from user
+- Optional constraints (latency/safety/quality)
+- Optional project-specific parameters
+
+## Dependency Checklist
+${depChecklist}
+
+## Context Files
+${contextFiles}
+
+## Execution Procedure
+1. Parse task objective and constraints.
+2. Verify dependency checklist and mark missing items.
+3. Use context files first; avoid unsupported assumptions.
+4. Produce result using concise, testable steps.
+5. If critical dependency is missing, return fallback plan and request missing info.
+
+## Output Format
+Use this structure:
+1) Summary
+2) Key assumptions
+3) Step-by-step plan
+4) Risks and fallback
+5) Next actions
+
+## Failure Handling
+- If required dependency is missing: stop and ask for missing knowledge.
+- If confidence is low: provide conservative fallback and validation steps.
+- If context conflicts: report conflict sources explicitly.
+
+## Notes
+- Derived from task:
+  ${params.task}
+${referenceSection}
+`;
+}
+
+function loadSkillCreatorReference(skillsRoot: string): string {
+  if (!skillsRoot || !existsSync(skillsRoot)) return "";
+  const entries = buildTree(skillsRoot, [".md"], 0, 4);
+  const stack: TreeNode[] = [...entries];
+  while (stack.length > 0) {
+    const node = stack.pop();
+    if (!node) continue;
+    if (node.type === "dir" && node.children?.length) {
+      stack.push(...node.children);
+      continue;
+    }
+    if (node.type !== "file") continue;
+    const normalizedPath = node.path.toLowerCase();
+    if (!normalizedPath.endsWith("skill.md")) continue;
+    try {
+      const content = readFileSync(node.path, "utf-8").trim();
+      if (!content) return "";
+      const parent = basename(normalizedPath.replace(/\/skill\.md$/, ""));
+      const isSkillCreator =
+        parent.includes("skill-creator") ||
+        /name:\s*["']?skill-creator["']?/i.test(content) ||
+        /skill-creator/i.test(content);
+      if (!isSkillCreator) continue;
+      // Keep full reference structure but cap extreme size.
+      return content.length > 8000 ? content.slice(0, 8000) : content;
+    } catch {
+      return "";
+    }
+  }
+  return "";
+}
+
+function normalizeConfig(raw: any): Config | null {
+  if (!raw || typeof raw !== "object") return null;
+  const vault_path = String(raw.vault_path ?? "").trim();
+  const project_path = String(raw.project_path ?? "").trim();
+  const skills_path = String(raw.skills_path ?? "").trim();
+  const panel_ratio = Number.isFinite(raw.panel_ratio) ? Number(raw.panel_ratio) : 0.45;
+  if (!vault_path || !project_path || !skills_path) return null;
+  return { vault_path, project_path, skills_path, panel_ratio };
 }
 
 function readConfig(): Config | null {
   if (!existsSync(CONFIG_FILE)) return null;
   try {
-    return JSON.parse(readFileSync(CONFIG_FILE, "utf-8"));
+    const parsed = JSON.parse(readFileSync(CONFIG_FILE, "utf-8"));
+    return normalizeConfig(parsed);
   } catch {
     return null;
   }
@@ -187,7 +322,9 @@ const server = serve({
       }
       if (req.method === "POST") {
         return req.json().then((body: Config) => {
-          writeConfig(body);
+          const normalized = normalizeConfig(body);
+          if (!normalized) return errorResponse("vault_path, project_path, skills_path are required");
+          writeConfig(normalized);
           return jsonResponse({ ok: true });
         });
       }
@@ -493,7 +630,29 @@ const server = serve({
       return jsonResponse(tree);
     }
 
+    if (url.pathname === "/api/skills/tree") {
+      const skillsPath = url.searchParams.get("path") || readConfig()?.skills_path || "";
+      if (!skillsPath || !existsSync(skillsPath)) return errorResponse("skills path not found");
+      const tree = buildTree(skillsPath, undefined, 0, 5);
+      return jsonResponse(tree);
+    }
+
     if (url.pathname === "/api/project/file") {
+      if (req.method === "GET") {
+        const filePath = url.searchParams.get("path") || "";
+        if (!filePath || !existsSync(filePath)) return errorResponse("file not found");
+        const content = readFileSync(filePath, "utf-8");
+        return jsonResponse({ content });
+      }
+      if (req.method === "PUT") {
+        const { path: filePath, content } = await req.json() as { path: string; content: string };
+        if (!filePath) return errorResponse("missing path");
+        writeFileSync(filePath, content, "utf-8");
+        return jsonResponse({ ok: true });
+      }
+    }
+
+    if (url.pathname === "/api/skills/file") {
       if (req.method === "GET") {
         const filePath = url.searchParams.get("path") || "";
         if (!filePath || !existsSync(filePath)) return errorResponse("file not found");
@@ -524,6 +683,41 @@ const server = serve({
       }
     }
 
+    // ── Skills: generate template from analysis report ──────────────────────
+    if (url.pathname === "/api/skills/generate-template" && req.method === "POST") {
+      const body = await req.json() as {
+        task: string;
+        domain?: string;
+        dependencies?: { name: string; level: string; description?: string }[];
+        foundFiles?: string[];
+      };
+      try {
+        // Fast local draft generation to avoid LLM latency.
+        const cfg = readConfig();
+        const referenceSkill = loadSkillCreatorReference(cfg?.skills_path || defaultSkillsRoot());
+        const content = buildFastSkillTemplate({ ...body, referenceSkill });
+        return jsonResponse({ content });
+      } catch (err: any) {
+        return jsonResponse({ error: err?.message ?? "failed to generate skill template" }, 500);
+      }
+    }
+
+    // ── Skills: save edited skill template ──────────────────────────────────
+    if (url.pathname === "/api/skills/save" && req.method === "POST") {
+      const body = await req.json() as { name: string; content: string; rootDir?: string };
+      if (!body.name?.trim()) return errorResponse("name required");
+      if (!body.content?.trim()) return errorResponse("content required");
+
+      const cfg = readConfig();
+      const rootDir = body.rootDir?.trim() || cfg?.skills_path || defaultSkillsRoot();
+      const slug = slugifySkillName(body.name);
+      const skillDir = join(rootDir, slug);
+      if (!existsSync(skillDir)) mkdirSync(skillDir, { recursive: true });
+      const skillFile = join(skillDir, "SKILL.md");
+      writeFileSync(skillFile, body.content, "utf-8");
+      return jsonResponse({ ok: true, path: skillFile, skillDir });
+    }
+
     // ── Dependency Analysis (SSE streaming) ─────────────────────────────────
     if (url.pathname === "/api/dm/analyze" && req.method === "POST") {
       const { task } = await req.json() as { task: string };
@@ -540,6 +734,7 @@ const server = serve({
             await analyzeDependencies({
               task,
               vaultPath,
+              skillsDir: cfg?.skills_path || defaultSkillsRoot(),
               onEvent: (event) => send(event),
             });
           } catch (err: any) {

@@ -1,20 +1,23 @@
 import React, { useState } from "react";
-import { Config } from "../store";
+import { Config, useStore } from "../store";
+import { t } from "../i18n";
 
 interface Props {
   onSave: (config: Config) => void;
 }
 
 export default function SetupDialog({ onSave }: Props) {
+  const uiLanguage = useStore(s => s.uiLanguage);
   const [vault, setVault] = useState("");
   const [project, setProject] = useState("");
+  const [skills, setSkills] = useState("");
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
 
   const handleSave = async () => {
-    if (!vault || !project) { setError("Both paths are required."); return; }
+    if (!vault || !project || !skills) { setError(t(uiLanguage, "setup_required")); return; }
     setSaving(true);
-    const config: Config = { vault_path: vault, project_path: project, panel_ratio: 0.45 };
+    const config: Config = { vault_path: vault, project_path: project, skills_path: skills, panel_ratio: 0.45 };
     try {
       await fetch("/api/config", {
         method: "POST",
@@ -43,16 +46,16 @@ export default function SetupDialog({ onSave }: Props) {
         boxShadow: "0 8px 32px rgba(0,0,0,0.5)",
       }}>
         <div style={{ marginBottom: 8, color: "#007acc", fontSize: 22, fontWeight: 700, letterSpacing: 1 }}>
-          MindAct
+          {t(uiLanguage, "setup_title")}
         </div>
         <div style={{ color: "#888", marginBottom: 28, fontSize: 13 }}>
-          Welcome! Configure your vault and project paths to get started.
+          {t(uiLanguage, "setup_subtitle")}
         </div>
 
         <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
           <div>
             <label style={{ color: "#aaa", fontSize: 11, display: "block", marginBottom: 6 }}>
-              VAULT PATH (Markdown knowledge base directory)
+              {t(uiLanguage, "setup_vault")}
             </label>
             <input
               value={vault}
@@ -64,12 +67,23 @@ export default function SetupDialog({ onSave }: Props) {
           </div>
           <div>
             <label style={{ color: "#aaa", fontSize: 11, display: "block", marginBottom: 6 }}>
-              PROJECT PATH (Code directory for Claude Code)
+              {t(uiLanguage, "setup_project")}
             </label>
             <input
               value={project}
               onChange={e => setProject(e.target.value)}
               placeholder="/Users/you/my-project"
+              style={inputStyle}
+            />
+          </div>
+          <div>
+            <label style={{ color: "#aaa", fontSize: 11, display: "block", marginBottom: 6 }}>
+              {t(uiLanguage, "setup_skills")}
+            </label>
+            <input
+              value={skills}
+              onChange={e => setSkills(e.target.value)}
+              placeholder="/Users/you/MindAct/skills-test"
               style={inputStyle}
             />
           </div>
@@ -90,7 +104,7 @@ export default function SetupDialog({ onSave }: Props) {
               opacity: saving ? 0.7 : 1,
             }}
           >
-            {saving ? "Saving..." : "Get Started →"}
+            {saving ? t(uiLanguage, "saving") : t(uiLanguage, "get_started")}
           </button>
         </div>
       </div>

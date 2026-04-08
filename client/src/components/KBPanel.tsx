@@ -4,6 +4,8 @@ import FileTree from "./FileTree";
 import Editor from "./Editor";
 import Graph from "./Graph";
 import { TreeNode } from "../store";
+import platformActionsZhData from "../data/platform_actions.zh.json";
+import platformActionsEnData from "../data/platform_actions.en.json";
 
 async function pickDir(): Promise<string | null> {
   const api = (window as any).electronAPI;
@@ -70,7 +72,7 @@ export default function KBPanel({ onFullscreenBrain, onBrainInspect }: { onFulls
     if (!exists) { setPathError("Folder not found. Create it?"); setCreating(true); return; }
     setPathError(null);
     setCreating(false);
-    const newConfig = { ...(config ?? { project_path: "", panel_ratio: 0.45 }), vault_path: trimmed };
+    const newConfig = { ...(config ?? { project_path: "", skills_path: "", panel_ratio: 0.45 }), vault_path: trimmed };
     await fetch("/api/config", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(newConfig) });
     setConfig(newConfig);
     loadVault(trimmed);
@@ -445,50 +447,12 @@ export default function KBPanel({ onFullscreenBrain, onBrainInspect }: { onFulls
   );
 }
 
-const PLATFORM_ACTIONS: Record<string, string[]> = {
-  physics: [
-    "查询牛顿力学公式与约束条件",
-    "计算关节加速度上限（扭矩/惯量）",
-    "评估碰撞避让裕量（冲量-动量定理）",
-    "分析无人机流体动力学参数（雷诺数）",
-    "推导刚体旋转响应（惯性张量）",
-  ],
-  robots: [
-    "评估执行器饱和风险（扭矩上限）",
-    "选择夹爪柔顺性匹配策略",
-    "设计控制架构（PID vs MPC）",
-    "分析传感器延迟对控制带宽的影响",
-    "制定传感器失效安全策略",
-  ],
-  algorithms: [
-    "选择路径规划算法（A* / RRT* / D* Lite）",
-    "评估算法时间与空间复杂度",
-    "高维配置空间运动规划",
-    "实时重规划策略设计",
-    "凸优化问题求解（梯度下降 / ADMM）",
-  ],
-  system_design: [
-    "识别系统单点故障并制定缓解方案",
-    "设计水平扩展路径",
-    "选择数据一致性模型（强一致 / 最终一致）",
-    "容量规划（QPS × P99延迟）",
-    "架构模式选型（事件驱动 / CQRS / Saga）",
-  ],
-  materials: [
-    "根据载荷类型选择材料",
-    "查询杨氏模量与屈服强度",
-    "评估疲劳极限与循环载荷耐久性",
-    "高温 / 腐蚀环境合金选型",
-    "重量预算下的材料优化（铝 / CFRP / 钛）",
-  ],
-};
+const PLATFORM_ACTIONS_ZH = platformActionsZhData as Record<string, string[]>;
+const PLATFORM_ACTIONS_EN = platformActionsEnData as Record<string, string[]>;
 
 function PlatformClassifiedView({ fileName }: { fileName: string }) {
-  const actions = PLATFORM_ACTIONS[fileName.toLowerCase()] ?? [
-    "查看关联决策依赖",
-    "分析跨模块链接关系",
-    "导出结构化知识图谱",
-  ];
+  const dictionary = detectUiLanguage() === "zh" ? PLATFORM_ACTIONS_ZH : PLATFORM_ACTIONS_EN;
+  const actions = dictionary[fileName.toLowerCase()] ?? dictionary.__default__ ?? [];
 
   return (
     <div style={{
@@ -519,6 +483,12 @@ function PlatformClassifiedView({ fileName }: { fileName: string }) {
       </div>
     </div>
   );
+}
+
+function detectUiLanguage(): "zh" | "en" {
+  if (typeof navigator === "undefined") return "en";
+  const lang = (navigator.language || "").toLowerCase();
+  return lang.startsWith("zh") ? "zh" : "en";
 }
 
 function SectionHeader({ label, open, onToggle, badge, badgeTitle, action }: {

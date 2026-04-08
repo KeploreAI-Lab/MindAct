@@ -2,13 +2,18 @@ import React, { useEffect, useRef, useState, useCallback } from "react";
 import { useStore } from "./store";
 import KBPanel from "./components/KBPanel";
 import FileExplorer from "./components/FileExplorer";
+import SkillsExplorer from "./components/SkillsExplorer";
 import Terminal from "./components/Terminal";
 import Graph from "./components/Graph";
 import SetupDialog from "./components/SetupDialog";
 import HistoryPanel from "./components/HistoryPanel";
 import BrainInspect from "./components/BrainInspect";
+import { t } from "./i18n";
 
 export default function App() {
+  const isConfigComplete = (c: any): c is import("./store").Config =>
+    !!c?.vault_path && !!c?.project_path && !!c?.skills_path;
+
   const config = useStore(s => s.config);
   const configLoaded = useStore(s => s.configLoaded);
   const setConfig = useStore(s => s.setConfig);
@@ -23,6 +28,8 @@ export default function App() {
   const setKbViewMode = useStore(s => s.setKbViewMode);
   const panelRatio = useStore(s => s.panelRatio);
   const setPanelRatio = useStore(s => s.setPanelRatio);
+  const uiLanguage = useStore(s => s.uiLanguage);
+  const setUiLanguage = useStore(s => s.setUiLanguage);
 
   const [showSettings, setShowSettings] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
@@ -41,11 +48,13 @@ export default function App() {
     fetch("/api/config")
       .then(r => r.json())
       .then(data => {
-        if (data) {
+        if (isConfigComplete(data)) {
           setConfig(data);
           setPanelRatio(data.panel_ratio ?? 0.45);
           loadVault(data.vault_path);
           loadProject(data.project_path);
+        } else {
+          setConfig(null);
         }
         setConfigLoaded(true);
       })
@@ -134,19 +143,28 @@ export default function App() {
         flexShrink: 0,
         userSelect: "none",
       }}>
-        <span style={{ color: "#007acc", fontWeight: 700, fontSize: 15, letterSpacing: 1 }}>MindAct</span>
+        <span style={{ color: "#007acc", fontWeight: 700, fontSize: 15, letterSpacing: 1 }}>{t(uiLanguage, "app_title")}</span>
         <div style={{ flex: 1 }} />
+        <span style={{ color: "#888", fontSize: 11 }}>{t(uiLanguage, "language")}</span>
+        <select
+          value={uiLanguage}
+          onChange={(e) => setUiLanguage(e.target.value as "en" | "zh")}
+          style={{ background: "#3a3a3a", border: "1px solid #555", color: "#ddd", borderRadius: 3, fontSize: 12, padding: "2px 6px" }}
+        >
+          <option value="en">EN</option>
+          <option value="zh">中文</option>
+        </select>
         <button
           onClick={() => setShowSettings(true)}
           style={btnStyle(false)}
         >
-          Settings
+          {t(uiLanguage, "settings")}
         </button>
         <button
           onClick={() => setShowHistory(h => !h)}
           style={btnStyle(showHistory)}
         >
-          History
+          {t(uiLanguage, "history")}
         </button>
       </div>
 
@@ -168,11 +186,16 @@ export default function App() {
             <>
               {/* Tabs */}
               <div style={{ display: "flex", borderBottom: "1px solid #444", flexShrink: 0 }}>
-                <TabBtn label="Decision Dependency" active={activeTab === "kb"} onClick={() => setActiveTab("kb")} />
-                <TabBtn label="Project" active={activeTab === "files"} onClick={() => setActiveTab("files")} />
+                <TabBtn label={t(uiLanguage, "tab_dependency")} active={activeTab === "kb"} onClick={() => setActiveTab("kb")} />
+                <TabBtn label={t(uiLanguage, "tab_skills")} active={activeTab === "skills"} onClick={() => setActiveTab("skills")} />
+                <TabBtn label={t(uiLanguage, "tab_project")} active={activeTab === "files"} onClick={() => setActiveTab("files")} />
               </div>
               <div style={{ flex: 1, overflow: "hidden", display: "flex", flexDirection: "column" }}>
-                {activeTab === "kb" ? <KBPanel onFullscreenBrain={() => setGraphMode(true)} onBrainInspect={() => setShowBrainInspect(true)} /> : <FileExplorer />}
+                {activeTab === "kb"
+                  ? <KBPanel onFullscreenBrain={() => setGraphMode(true)} onBrainInspect={() => setShowBrainInspect(true)} />
+                  : activeTab === "skills"
+                    ? <SkillsExplorer />
+                    : <FileExplorer />}
               </div>
             </>
           )}
@@ -216,7 +239,7 @@ export default function App() {
       {showSettings && (
         <div style={modalOverlayStyle} onClick={() => setShowSettings(false)}>
           <div style={modalStyle} onClick={e => e.stopPropagation()}>
-            <h3 style={{ marginBottom: 16, color: "#d4d4d4" }}>Settings</h3>
+            <h3 style={{ marginBottom: 16, color: "#d4d4d4" }}>{t(uiLanguage, "settings")}</h3>
             <SettingsForm config={config} onSave={(c) => {
               setConfig(c);
               loadVault(c.vault_path);
@@ -278,11 +301,13 @@ const modalStyle: React.CSSProperties = {
 };
 
 function SettingsForm({ config, onSave }: { config: import("./store").Config; onSave: (c: import("./store").Config) => void }) {
+  const uiLanguage = useStore(s => s.uiLanguage);
   const [vault, setVault] = useState(config.vault_path);
   const [project, setProject] = useState(config.project_path);
+  const [skills, setSkills] = useState(config.skills_path);
 
   const save = () => {
-    const c = { vault_path: vault, project_path: project, panel_ratio: config.panel_ratio };
+    const c = { vault_path: vault, project_path: project, skills_path: skills, panel_ratio: config.panel_ratio };
     fetch("/api/config", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(c) })
       .then(() => onSave(c));
   };
@@ -293,7 +318,9 @@ function SettingsForm({ config, onSave }: { config: import("./store").Config; on
       <input value={vault} onChange={e => setVault(e.target.value)} style={inputStyle} />
       <label style={{ color: "#888", fontSize: 11 }}>Project Path</label>
       <input value={project} onChange={e => setProject(e.target.value)} style={inputStyle} />
-      <button onClick={save} style={{ ...btnStyle(true), alignSelf: "flex-end", marginTop: 8 }}>Save</button>
+      <label style={{ color: "#888", fontSize: 11 }}>Skills Path</label>
+      <input value={skills} onChange={e => setSkills(e.target.value)} style={inputStyle} />
+      <button onClick={save} style={{ ...btnStyle(true), alignSelf: "flex-end", marginTop: 8 }}>{t(uiLanguage, "save")}</button>
     </div>
   );
 }

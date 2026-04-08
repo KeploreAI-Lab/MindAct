@@ -24,7 +24,22 @@
 
 **MindAct** is a desktop AI workspace that combines a Claude Code terminal, a built-in Obsidian-style knowledge graph, and an intelligent Dependency Analysis engine — purpose-built for engineers working on domain-specific projects like robotics, physics simulation, and control systems.
 
-Stop sending naked prompts to Claude. MindAct automatically retrieves the right context from your knowledge base, scores execution confidence, and surfaces knowledge gaps before you run — so Claude always has what it needs to get the job done right.
+<p align="center">
+  <img src="assets/algorithm_concept_diagram.png" alt="MindAct runtime workflow" width="100%" style="border-radius: 10px;">
+  <br>
+  <em>MindAct Conceptual Workflow</em>
+</p>
+
+Stop sending naked prompts to Claude. MindAct first checks reusable skills, then retrieves the right context from your knowledge base, scores execution confidence, and surfaces knowledge gaps before you run.
+
+Think of MindAct like cooking:
+
+- **Knowledge Base** = recipes, ingredient knowledge, and heat-control experience
+- **Skill** = an executable cooking procedure module for a dish type
+- **Execution Tool** = wok, stove, robot arm, or CLI tools
+- **Agent** = the person/system that invokes the procedure and actually cooks
+
+MindAct separates "what to know" from "how to execute", then connects both at runtime.
 
 <p align="center">
   <img src="assets/hero_screenshot.jpg" alt="MindAct Desktop — Brain Graph × Claude Code Terminal" width="100%" style="border-radius: 10px;">
@@ -58,18 +73,31 @@ Most AI coding assistants treat every task the same way: you type, it generates.
 ## What it does
 
 ```
-User task → Dependency Analysis → Knowledge Retrieval → Enriched Prompt → Claude
+User task → Skill Match (Stage 0) → (if miss) Dependency Analysis → Knowledge Retrieval → Enriched Prompt → Claude
 ```
 
 **Core features:**
 
 - **Claude Code terminal** — full interactive Claude Code session, embedded in the app
+- **Skill-first execution** — tries to match existing skills before knowledge analysis; when matched, execute directly with skill guidance
+- **Skills workspace** — dedicated `Skills` tab to browse/edit skill files under configured `skills_path`
 - **Obsidian-style Brain Graph** — your knowledge base as a live, interactive `[[wiki-linked]]` graph. Nodes glow when they're relevant to your current task
 - **Dependency Analysis engine** — 4-stage LLM pipeline that detects what your task needs, matches it against your KB, and scores confidence before execution
 - **Ghost nodes** — missing dependencies appear as hollow red circles in the graph. Click one → get an AI-generated structured template to fill in
 - **Streaming analysis log** — real-time SSE progress visible as a floating overlay on the graph, not a modal blocking your work
 - **Context-enriched execution** — when you hit Execute, Claude receives your task plus all relevant KB content, automatically
 - **Knowledge templates** — when knowledge is missing, MindAct generates a domain-specific template (not a blank file) so you know exactly what to write
+- **Knowledge → Skill conversion** — after analysis, generate a reusable skill draft, edit it, and save as `skills_path/<skill-name>/SKILL.md`
+
+**Algorithm highlights (retrieval + confidence):**
+
+- **Hybrid retrieval** — lexical overlap + lightweight semantic match (char n-gram) + 1-2 hop graph proximity over `[[wiki-links]]`.
+- **Domain query expansion** — task terms are expanded through a domain dictionary before retrieval.
+- **Dependency-aware matching** — dependency decomposition first, file matching second; decomposition retries with high-relevance file hints when needed.
+- **Multi-hop dependency reasoning** — estimates cross-dependency chain integrity and highlights broken critical chains.
+- **Confidence stack** — combines dependency coverage, evidence quality, and noise penalty; supports optional post-hoc temperature calibration (`calib:collect`, `calib:fit`).
+- **Stability controls** — low-temperature analysis calls + deterministic post-processing + analysis memory reuse for similar tasks.
+- **Methods referenced** — inspired by CRAG, Self-RAG, GraphRAG, NAACL 2026 noise-aware calibration, and Bayesian RAG uncertainty ideas.
 
 ---
 
@@ -85,7 +113,7 @@ User task → Dependency Analysis → Knowledge Retrieval → Enriched Prompt �
 | Acting | ✅ Tool use | ✅ Claude Code |
 | **Domain memory** | ❌ Stateless | ✅ Knowledge graph |
 | **Dependency awareness** | ❌ Implicit | ✅ Explicit pre-flight check |
-| **Confidence scoring** | ❌ None | ✅ 0–100% before execution |
+| **Confidence scoring** | ❌ None | ✅ High / Medium / Low before execution |
 | **Knowledge gap detection** | ❌ None | ✅ Ghost nodes + templates |
 
 > ReAct asks: *"What should I do next?"*
@@ -104,6 +132,33 @@ User task → Dependency Analysis → Knowledge Retrieval → Enriched Prompt �
 | Knowledge graph | D3.js force-directed (Obsidian-style `[[links]]`) |
 | Code editor | CodeMirror 6 |
 | AI | Anthropic Claude API (`claude-sonnet-4-6` / `claude-haiku-4-5`) |
+
+---
+
+## Skill Workflow (End-to-End)
+
+MindAct now supports a complete skill lifecycle:
+
+1. **Skill-first match (Stage 0)**  
+   Before dependency analysis, the task is matched against existing skills in `skills_path`.
+2. **If matched**  
+   The report shows matched skill information and two actions:
+   - `Apply this Skill` (execute with skill guidance)
+   - `Without skill` (send original task to CLI directly)
+3. **If not matched**  
+   MindAct runs dependency analysis and retrieval as usual.
+4. **Generate skill from knowledge**  
+   In the report, click `Generate Skill Template` to create a draft from the current analysis result.
+5. **Edit and save**  
+   Review/edit draft content in the modal, then save to:
+   - `skills_path/<slug>/SKILL.md`
+6. **Reuse in future tasks**  
+   The new skill is available for future Stage 0 matching.
+
+UI behavior:
+- The Generate Skill button is disabled during generation to prevent double-click duplication.
+- Confidence percentage is hidden from users; only level (`High/Medium/Low`) is shown.
+- Project and Skills file trees default to collapsed folders.
 
 ---
 
@@ -174,6 +229,7 @@ bun run dev
 On first launch, MindAct will ask you to configure:
 - **Vault path** — folder where your private knowledge base markdown files live
 - **Project path** — your working project directory (opened in the Claude Code terminal)
+- **Skills path** — root directory where reusable skills are stored (e.g. `skills-test`)
 
 ---
 
@@ -185,7 +241,7 @@ On first launch, MindAct will ask you to configure:
   <em>Dependency analysis — streaming log, ghost nodes (red dashed), and confidence report</em>
 </p>
 
-The analysis runs a 4-stage LLM pipeline (all `claude-haiku` for speed, typically 3–8 seconds):
+The analysis runs after skill matching. If no skill is matched, it executes a 4-stage LLM pipeline (typically 3–8 seconds):
 
 1. **Domain detection** — is this a domain-specific task (robotics, physics, etc.)?
 2. **Dependency decomposition** — what knowledge modules does this task require?
@@ -196,6 +252,10 @@ The analysis runs a 4-stage LLM pipeline (all `claude-haiku` for speed, typicall
 - ≥ 75% → **High** — `▶ Execute` with enriched prompt
 - 40–74% → **Medium** — `▶ Execute` with missing dep warning
 - < 40% → **Low** — `⚠ Execute anyway` or fill gaps first
+
+Additional reasoning/stability:
+- **Multi-hop reasoning** checks whether critical dependency chains are connected.
+- **Low-temperature inference** and deterministic match stabilization reduce run-to-run randomness.
 
 **Ghost nodes** appear for missing deps. Clicking opens a new markdown file pre-filled with an AI-generated template specific to that dependency and your task context.
 

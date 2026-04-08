@@ -1,0 +1,9 @@
+{
+  "method": "temperature_scaling",
+  "temperature": 1,
+  "samples": 12,
+  "ece_before": 0.3733,
+  "ece_after": 0.3733,
+  "improved": true,
+  "fitted_at": "2026-04-08T17:09:09.836Z"
+}

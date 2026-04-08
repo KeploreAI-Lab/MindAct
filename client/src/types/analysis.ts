@@ -18,4 +18,14 @@ export interface AnalysisReport {
   confidence: number;
   confidenceLevel: "high" | "medium" | "low";
   enrichedPrompt: string;
+  reasoning?: {
+    multiHopScore: number;
+    brokenCriticalChains: string[];
+  };
+  matchedSkill?: {
+    id: string;
+    name: string;
+    path: string;
+    score: number;
+  } | null;
 }

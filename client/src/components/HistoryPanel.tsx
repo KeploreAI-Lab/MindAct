@@ -1,8 +1,9 @@
 import React, { useRef, useEffect } from "react";
 import { useStore, HistoryEntry } from "../store";
+import { t } from "../i18n";
 
 export default function HistoryPanel() {
-  const { chatHistory, scrollToTerminalLine, clearHistory } = useStore();
+  const { chatHistory, scrollToTerminalLine, clearHistory, uiLanguage } = useStore();
   const listRef = useRef<HTMLDivElement>(null);
 
   // Auto-scroll list to bottom when new entries arrive (scoped to this container only)
@@ -40,12 +41,12 @@ export default function HistoryPanel() {
         gap: 6,
       }}>
         <span style={{ color: "#888", fontSize: 10, flex: 1, textTransform: "uppercase", letterSpacing: 0.5 }}>
-          History
+          {t(uiLanguage, "history_panel")}
         </span>
         {chatHistory.length > 0 && (
           <button
             onClick={clearHistory}
-            title="Clear history"
+            title={t(uiLanguage, "clear_history")}
             style={{
               background: "none", border: "none", color: "#555",
               cursor: "pointer", fontSize: 10, padding: "2px 4px",
@@ -54,7 +55,7 @@ export default function HistoryPanel() {
             onMouseEnter={e => (e.currentTarget.style.color = "#e07b53")}
             onMouseLeave={e => (e.currentTarget.style.color = "#555")}
           >
-            Clear
+            {t(uiLanguage, "clear")}
           </button>
         )}
       </div>
@@ -63,14 +64,14 @@ export default function HistoryPanel() {
       <div ref={listRef} style={{ flex: 1, overflow: "auto", padding: "6px 0" }}>
         {chatHistory.length === 0 ? (
           <div style={{ color: "#444", fontSize: 10, padding: "16px 10px", textAlign: "center", lineHeight: 1.6 }}>
-            Start a conversation in the terminal to see history here.
+            {t(uiLanguage, "history_empty_hint")}
           </div>
         ) : (
           chatHistory.map((entry) => (
             <div
               key={entry.id}
               onClick={() => handleClick(entry)}
-              title="Click to jump to this message in terminal"
+              title={t(uiLanguage, "jump_message_terminal")}
               style={{
                 cursor: "pointer",
                 padding: "5px 8px",
@@ -97,7 +98,7 @@ export default function HistoryPanel() {
                 letterSpacing: 0.5,
                 fontWeight: 600,
               }}>
-                {entry.role === "user" ? "You" : "Claude"}
+                {entry.role === "user" ? t(uiLanguage, "you") : t(uiLanguage, "claude")}
               </div>
               <div style={{
                 fontSize: 10,

@@ -1,14 +1,22 @@
 import React, { useState } from "react";
 import type { AnalysisReport } from "../types/analysis";
+import { useStore } from "../store";
+import { t } from "../i18n";
 
 interface Props {
   report: AnalysisReport;
   onExecute: (enrichedPrompt: string) => void;
+  onExecuteRaw: (rawTask: string) => void;
+  onApplyCreatedSkill: (rawTask: string) => void;
   onDismiss: () => void;
   onAddKnowledge: () => void;
+  onCreateSkill: (report: AnalysisReport) => void;
+  createdSkillReady?: boolean;
+  creatingSkill?: boolean;
 }
 
-export default function DependencyReport({ report, onExecute, onDismiss, onAddKnowledge }: Props) {
+export default function DependencyReport({ report, onExecute, onExecuteRaw, onApplyCreatedSkill, onDismiss, onAddKnowledge, onCreateSkill, createdSkillReady, creatingSkill }: Props) {
+  const uiLanguage = useStore(s => s.uiLanguage);
   const [expanded, setExpanded] = useState(false);
   const levelConfig = {
     high:   { color: "#4ec9b0", label: "High", bg: "#0a2a20" },
@@ -39,22 +47,32 @@ export default function DependencyReport({ report, onExecute, onDismiss, onAddKn
         alignItems: "center",
         gap: 10,
       }}>
-        <span style={{ fontSize: 11, color: "#888" }}>Analysis Report · {report.domain}</span>
+        <span style={{ fontSize: 11, color: "#888" }}>{t(uiLanguage, "report_analysis")} · {report.domain}</span>
         <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 8 }}>
-          <ConfidenceBar score={report.confidence} color={levelConfig.color} />
           <span style={{
             fontSize: 12, fontWeight: 700, color: levelConfig.color,
             padding: "1px 8px", background: levelConfig.bg,
             border: `1px solid ${levelConfig.color}66`, borderRadius: 4,
           }}>
-            {report.confidence}% · {levelConfig.label}
+            {levelConfig.label}
           </span>
         </div>
       </div>
 
       {/* Dependency list */}
       <div style={{ padding: "10px 14px" }}>
-        {report.dependencies.length === 0 ? (
+        {report.matchedSkill && (
+          <div style={{ marginBottom: 8, padding: "7px 8px", background: "#0a1a20", borderRadius: 4, fontSize: 10, color: "#7dd3fc" }}>
+            ✅ {t(uiLanguage, "report_skill_matched")}: <b>{report.matchedSkill.name}</b>
+          </div>
+        )}
+        {report.matchedSkill ? (
+          <div style={{ padding: "8px 10px", background: "#0a1a20", borderRadius: 4, fontSize: 11, color: "#9dd9ff", lineHeight: 1.6 }}>
+            已匹配到可复用 Skill：<b>{report.matchedSkill.name}</b><br />
+            路径：<span style={{ color: "#7fb9de" }}>{report.matchedSkill.path}</span><br />
+            是否应用该 Skill 作为执行模板？
+          </div>
+        ) : report.dependencies.length === 0 ? (
           <div style={{ padding: "6px 8px", background: "#1a0a00", borderRadius: 4, fontSize: 10, color: "#c8a45a" }}>
             ⚠ Could not identify specific dependencies from this task.<br />
             Consider adding domain knowledge to your KB, or execute directly.
@@ -62,7 +80,7 @@ export default function DependencyReport({ report, onExecute, onDismiss, onAddKn
         ) : (
           <>
             <div style={{ fontSize: 10, color: "#555", marginBottom: 6, textTransform: "uppercase", letterSpacing: 0.8 }}>
-              Dependencies · {report.foundFiles.length} covered · {report.missingDeps.length} missing
+              {t(uiLanguage, "report_dependencies")} · {report.foundFiles.length} {t(uiLanguage, "report_covered")} · {report.missingDeps.length} {t(uiLanguage, "report_missing")}
             </div>
             <div style={{ display: "flex", flexDirection: "column", gap: 4, maxHeight: expanded ? 240 : 130, overflowY: "auto" }}>
               {report.dependencies.map((dep, i) => (
@@ -88,7 +106,7 @@ export default function DependencyReport({ report, onExecute, onDismiss, onAddKn
                     )}
                     {dep.coverage === "none" && (
                       <div style={{ fontSize: 9, color: "#666", marginTop: 1 }}>
-                        Add to KB
+                        {t(uiLanguage, "report_missing_hint")}
                       </div>
                     )}
                   </div>
@@ -97,7 +115,7 @@ export default function DependencyReport({ report, onExecute, onDismiss, onAddKn
             </div>
             {report.dependencies.length > 4 && (
               <button onClick={() => setExpanded(!expanded)} style={linkBtn}>
-                {expanded ? "Show less" : `Show all ${report.dependencies.length} items`}
+                {expanded ? t(uiLanguage, "report_show_less") : `${t(uiLanguage, "report_show_all")} ${report.dependencies.length}`}
               </button>
             )}
             {report.missingDeps.length > 0 && (
@@ -117,24 +135,52 @@ export default function DependencyReport({ report, onExecute, onDismiss, onAddKn
         gap: 8,
         justifyContent: "flex-end",
       }}>
-        <button onClick={onDismiss} style={ghostBtn}>Cancel</button>
-        {report.missingDeps.length > 0 && (
-          <button onClick={onAddKnowledge} style={secondaryBtn}>
-            ✓ Knowledge added · Re-analyze
+        <button onClick={onDismiss} style={ghostBtn}>{t(uiLanguage, "report_cancel")}</button>
+        {!report.matchedSkill && !createdSkillReady && (
+          <button
+            onClick={() => onCreateSkill(report)}
+            disabled={!!creatingSkill}
+            style={secondaryBtn(!!creatingSkill)}
+          >
+            {creatingSkill
+              ? `⟳ ${t(uiLanguage, "report_generating_skill")}`
+              : `✦ ${t(uiLanguage, "report_generate_skill")}`}
           </button>
         )}
-        <button onClick={() => onExecute(report.enrichedPrompt)} style={primaryBtn(levelConfig.color)}>
-          {report.confidenceLevel === "low" ? "⚠ Execute anyway" : "▶ Execute"}
+        {report.matchedSkill && (
+          <button onClick={() => onExecuteRaw(report.task)} style={secondaryBtn()}>
+            {t(uiLanguage, "report_without_skill")}
+          </button>
+        )}
+        {!report.matchedSkill && createdSkillReady && (
+          <button onClick={() => onExecuteRaw(report.task)} style={secondaryBtn()}>
+            {t(uiLanguage, "report_without_skill")}
+          </button>
+        )}
+        {report.missingDeps.length > 0 && (
+          <button onClick={onAddKnowledge} style={secondaryBtn()}>
+            ✓ {t(uiLanguage, "report_reanalyze")}
+          </button>
+        )}
+        <button
+          onClick={() => {
+            if (!report.matchedSkill && createdSkillReady) {
+              onApplyCreatedSkill(report.task);
+              return;
+            }
+            onExecute(report.enrichedPrompt);
+          }}
+          style={primaryBtn(levelConfig.color)}
+        >
+          {report.matchedSkill
+            ? `▶ ${t(uiLanguage, "report_apply_skill")}`
+            : createdSkillReady
+              ? `▶ ${t(uiLanguage, "report_apply_created_skill")}`
+              : report.confidenceLevel === "low"
+                ? `⚠ ${t(uiLanguage, "report_execute_anyway")}`
+                : `▶ ${t(uiLanguage, "report_execute")}`}
         </button>
       </div>
-    </div>
-  );
-}
-
-function ConfidenceBar({ score, color }: { score: number; color: string }) {
-  return (
-    <div style={{ width: 60, height: 4, background: "#222", borderRadius: 2, overflow: "hidden" }}>
-      <div style={{ width: `${score}%`, height: "100%", background: color, borderRadius: 2, transition: "width 0.5s" }} />
     </div>
   );
 }
@@ -147,10 +193,16 @@ const ghostBtn: React.CSSProperties = {
   background: "none", border: "1px solid #333", borderRadius: 4,
   color: "#666", cursor: "pointer", fontSize: 11, padding: "4px 12px",
 };
-const secondaryBtn: React.CSSProperties = {
-  background: "#1a1800", border: "1px solid #c8a45a55", borderRadius: 4,
-  color: "#c8a45a", cursor: "pointer", fontSize: 11, padding: "4px 12px",
-};
+const secondaryBtn = (disabled?: boolean): React.CSSProperties => ({
+  background: "#1a1800",
+  border: "1px solid #c8a45a55",
+  borderRadius: 4,
+  color: "#c8a45a",
+  cursor: disabled ? "not-allowed" : "pointer",
+  fontSize: 11,
+  padding: "4px 12px",
+  opacity: disabled ? 0.65 : 1,
+});
 const primaryBtn = (color: string): React.CSSProperties => ({
   background: color + "22", border: `1px solid ${color}88`, borderRadius: 4,
   color: color, cursor: "pointer", fontSize: 11, padding: "4px 14px", fontWeight: 600,

@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import type { UiLanguage } from "./i18n";
 
 // Re-export graph types from graph_manager — single source of truth
 export type { GraphNode, GraphEdge } from "./graph_manager";
@@ -6,6 +7,7 @@ export type { GraphNode, GraphEdge } from "./graph_manager";
 export interface Config {
   vault_path: string;
   project_path: string;
+  skills_path: string;
   panel_ratio: number;
 }
 
@@ -41,7 +43,7 @@ interface AppState {
   vaultTree: TreeNode[];
   platformTree: TreeNode[];
   projectTree: TreeNode[];
-  activeTab: "kb" | "files";
+  activeTab: "kb" | "skills" | "files";
   graphMode: boolean;
   kbViewMode: "files" | "brain";
   openFilePath: string | null;
@@ -52,6 +54,7 @@ interface AppState {
   chatHistory: HistoryEntry[];
   scrollToTerminalLine: ((line: number) => void) | null;
   isThinking: boolean;
+  uiLanguage: UiLanguage;
 
   // Dependency analysis
   analysisMode: boolean;
@@ -67,7 +70,7 @@ interface AppState {
   setVaultTree: (t: TreeNode[]) => void;
   setPlatformTree: (t: TreeNode[]) => void;
   setProjectTree: (t: TreeNode[]) => void;
-  setActiveTab: (t: "kb" | "files") => void;
+  setActiveTab: (t: "kb" | "skills" | "files") => void;
   setGraphMode: (v: boolean) => void;
   setKbViewMode: (m: "files" | "brain") => void;
   setOpenFile: (path: string | null, content: string | null) => void;
@@ -78,6 +81,7 @@ interface AppState {
   clearHistory: () => void;
   setScrollToTerminalLine: (fn: ((line: number) => void) | null) => void;
   setIsThinking: (v: boolean) => void;
+  setUiLanguage: (lang: UiLanguage) => void;
 
   setAnalysisMode: (v: boolean) => void;
   setAnalysisRunning: (v: boolean) => void;
@@ -111,8 +115,9 @@ export const useStore = create<AppState>((set) => ({
   chatHistory: [],
   scrollToTerminalLine: null,
   isThinking: false,
+  uiLanguage: "en",
 
-  analysisMode: false,
+  analysisMode: true,
   analysisRunning: false,
   graphHighlights: [],
   ghostNodes: [] as { name: string; template: string }[],
@@ -136,6 +141,7 @@ export const useStore = create<AppState>((set) => ({
   clearHistory: () => set({ chatHistory: [] }),
   setScrollToTerminalLine: (fn) => set({ scrollToTerminalLine: fn }),
   setIsThinking: (v) => set({ isThinking: v }),
+  setUiLanguage: (lang) => set({ uiLanguage: lang }),
 
   setAnalysisMode: (v) => set({ analysisMode: v }),
   setAnalysisRunning: (v) => set({ analysisRunning: v }),

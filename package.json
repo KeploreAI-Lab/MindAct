@@ -6,7 +6,9 @@
     "dev": "concurrently \"bun run server.ts\" \"cd client && bun run dev\"",
     "server": "bun run server.ts",
     "build": "cd client && bun run build",
-    "start": "bun run build && bun run server.ts"
+    "start": "bun run build && bun run server.ts",
+    "calib:collect": "CALIB_SAMPLES=100 bun run scripts/calibration_collect.ts",
+    "calib:fit": "bun run scripts/calibration_fit.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.82.0",

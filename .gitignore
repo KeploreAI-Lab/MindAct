@@ -3,3 +3,7 @@ client/node_modules/
 client/dist/
 .env
 *.log
+research/
+skills-test/
+my_project/
+knowledge_base/

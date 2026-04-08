@@ -1,0 +1,42 @@
+{
+  "physics": [
+    "Query Newtonian constraints and formulas",
+    "Compute joint acceleration limits (torque/inertia)",
+    "Evaluate collision margin (impulse-momentum)",
+    "Analyze drone fluid dynamics parameters (Reynolds number)",
+    "Derive rigid-body rotational response (inertia tensor)"
+  ],
+  "robots": [
+    "Assess actuator saturation risk (torque ceiling)",
+    "Select gripper compliance matching strategy",
+    "Design control architecture (PID vs MPC)",
+    "Analyze sensor delay impact on control bandwidth",
+    "Define fail-safe policy for sensor faults"
+  ],
+  "algorithms": [
+    "Select planning algorithm (A* / RRT* / D* Lite)",
+    "Evaluate time and space complexity",
+    "Plan in high-dimensional configuration spaces",
+    "Design real-time replanning strategy",
+    "Solve convex optimization (gradient descent / ADMM)"
+  ],
+  "system_design": [
+    "Identify single points of failure and mitigations",
+    "Design horizontal scaling path",
+    "Choose consistency model (strong vs eventual)",
+    "Capacity planning (QPS x P99 latency)",
+    "Select architecture pattern (event-driven / CQRS / Saga)"
+  ],
+  "materials": [
+    "Select materials by load profile",
+    "Check Young's modulus and yield strength",
+    "Assess fatigue limit and cyclic durability",
+    "Choose alloys for high-temp/corrosive environments",
+    "Optimize material under mass budget (Al/CFRP/Ti)"
+  ],
+  "__default__": [
+    "Inspect related decision dependencies",
+    "Analyze cross-module link relationships",
+    "Export structured knowledge graph"
+  ]
+}

@@ -3,6 +3,7 @@ import { useStore } from "../store";
 import { createGraphRenderer } from "../graph_manager";
 import type { GraphNode, GraphData, GraphRendererHandle, HighlightNode } from "../graph_manager";
 import GraphLogDrawer from "./GraphLogDrawer";
+import { t } from "../i18n";
 
 interface GraphProps {
   compact?: boolean;
@@ -101,12 +102,13 @@ function GraphToolbar({ compact, onFullscreen, onExitFullscreen, onBrainInspect 
   onExitFullscreen?: () => void;
   onBrainInspect?: () => void;
 }) {
+  const uiLanguage = useStore(s => s.uiLanguage);
   return (
     <div style={{
       padding: "8px 16px", background: "#252526", borderBottom: "1px solid #333",
       fontSize: 11, color: "#888", flexShrink: 0, display: "flex", alignItems: "center", gap: 16,
     }}>
-      <span>{compact ? "Brain Graph — 点击节点查看详情" : "Brain — scroll to zoom, drag nodes, click to open"}</span>
+      <span>{compact ? t(uiLanguage, "graph_toolbar_compact") : t(uiLanguage, "graph_toolbar_full")}</span>
       <span style={{ display: "flex", alignItems: "center", gap: 8, marginLeft: "auto" }}>
         {!compact && (
           <>
@@ -118,10 +120,10 @@ function GraphToolbar({ compact, onFullscreen, onExitFullscreen, onBrainInspect 
           <ToolbarButton onClick={onBrainInspect} accent>⬡ BrainInspect</ToolbarButton>
         )}
         {compact && onFullscreen && (
-          <ToolbarButton onClick={onFullscreen}>⛶ 全屏</ToolbarButton>
+          <ToolbarButton onClick={onFullscreen}>⛶ {t(uiLanguage, "fullscreen")}</ToolbarButton>
         )}
         {!compact && onExitFullscreen && (
-          <ToolbarButton onClick={onExitFullscreen}>← 退出全屏</ToolbarButton>
+          <ToolbarButton onClick={onExitFullscreen}>← {t(uiLanguage, "exit_fullscreen")}</ToolbarButton>
         )}
       </span>
     </div>
