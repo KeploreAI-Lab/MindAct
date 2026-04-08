@@ -1,26 +1,30 @@
-<p align="center">
-  <img src="assets/keploreai-logo.png" alt="KeploreAI" height="38" style="filter: invert(1);">
-  &nbsp;&nbsp;&times;&nbsp;&nbsp;
-  <strong style="font-size: 28px;">MindAct</strong>
-</p>
+<div align="center">
 
-<p align="center">
-  <code>Claude Code</code> &nbsp;
-  <code>AI Agent</code> &nbsp;
-  <code>Obsidian</code> &nbsp;
-  <code>RAG</code> &nbsp;
-  <code>Knowledge Graph</code> &nbsp;
-  <code>Dependency Analysis</code> &nbsp;
-  <a href="https://discord.gg/hpq9t4QQ">💬 Discord</a>
-</p>
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/mindact-logo-dark.png">
+  <source media="(prefers-color-scheme: light)" srcset="assets/mindact-logo-light.png">
+  <img src="assets/mindact-logo-dark.png" alt="KeploreAI × MindAct" width="55%">
+</picture>
+
+[![Claude Code](https://img.shields.io/badge/Claude_Code-Powered-d97706?style=flat-square&logo=anthropic&logoColor=white)](https://docs.anthropic.com/claude-code)
+[![AI Agent](https://img.shields.io/badge/AI_Agent-Desktop-3b82f6?style=flat-square&logo=electron&logoColor=white)](https://github.com/KeploreAI-Lab/MindAct)
+[![Obsidian](https://img.shields.io/badge/Obsidian-Compatible-7c3aed?style=flat-square&logo=obsidian&logoColor=white)](https://obsidian.md)
+[![RAG](https://img.shields.io/badge/RAG-Knowledge_Retrieval-f59e0b?style=flat-square)](https://github.com/KeploreAI-Lab/MindAct)
+[![Knowledge Graph](https://img.shields.io/badge/Knowledge_Graph-D3.js-8b5cf6?style=flat-square)](https://github.com/KeploreAI-Lab/MindAct)
+[![License](https://img.shields.io/badge/License-AGPL--3.0-green?style=flat-square)](./LICENSE)
+
+[![Discord](https://img.shields.io/badge/Discord-Join-5865F2?style=flat-square&logo=discord&logoColor=white)](https://discord.gg/hpq9t4QQ)
+[![GitHub Stars](https://img.shields.io/github/stars/KeploreAI-Lab/MindAct?style=flat-square&color=DAA520)](https://github.com/KeploreAI-Lab/MindAct/stargazers)
+
+[English](./README.md) | [中文文档](./README.zh.md)
+
+</div>
 
 > **From ReAct to MindAct.** ReAct taught agents to reason before acting. MindAct takes it further — before your agent acts, it knows what it doesn't know.
 
 **MindAct** is a desktop AI workspace that combines a Claude Code terminal, a built-in Obsidian-style knowledge graph, and an intelligent Dependency Analysis engine — purpose-built for engineers working on domain-specific projects like robotics, physics simulation, and control systems.
 
 Stop sending naked prompts to Claude. MindAct automatically retrieves the right context from your knowledge base, scores execution confidence, and surfaces knowledge gaps before you run — so Claude always has what it needs to get the job done right.
-
-> 中文文档请见 [README.zh.md](./README.zh.md)
 
 <p align="center">
   <img src="assets/hero_screenshot.jpg" alt="MindAct Desktop — Brain Graph × Claude Code Terminal" width="100%" style="border-radius: 10px;">
