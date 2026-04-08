@@ -25,12 +25,14 @@
 **MindAct** is a desktop AI workspace that combines a Claude Code terminal, a built-in Obsidian-style knowledge graph, and an intelligent Dependency Analysis engine — purpose-built for engineers working on domain-specific projects like robotics, physics simulation, and control systems.
 
 <p align="center">
-  <img src="assets/algorithm_concept_diagram.png" alt="MindAct runtime workflow" width="100%" style="border-radius: 10px;">
+  <img src="assets/mindact_ecosystem.png" alt="MindAct Ecosystem" width="78%" style="border-radius: 10px;">
   <br>
-  <em>MindAct Conceptual Workflow</em>
+  <em>MindAct: AI Agent with Specific Human Knowledge</em>
 </p>
 
-Stop sending naked prompts to Claude. MindAct first checks reusable skills, then retrieves the right context from your knowledge base, scores execution confidence, and surfaces knowledge gaps before you run.
+MindAct is built around two reinforcing loops. On the right, **Knowledge-based Learning**: humans bring in challenges and real-world experience, which get structured into a knowledge base — and that knowledge base in turn feeds back into how humans understand their domain. On the left, **Human-in-Loop Execution**: the agent uses that knowledge to plan and invoke skills, drives execution through tools, produces output and logs, and returns results to the human for validation. When something is wrong or missing, the human supplements knowledge directly back to the agent — and the cycle tightens.
+
+Skills sit at the intersection: they are operationalized solutions distilled from knowledge, ready to be invoked. The system is designed so every execution makes the knowledge base more complete, and every addition to the knowledge base makes the next execution more reliable.
 
 Think of MindAct like cooking:
 
@@ -39,7 +41,7 @@ Think of MindAct like cooking:
 - **Execution Tool** = wok, stove, robot arm, or CLI tools
 - **Agent** = the person/system that invokes the procedure and actually cooks
 
-MindAct separates "what to know" from "how to execute", then connects both at runtime.
+MindAct is knowledge-first: the primary goal is to accumulate, structure, and expand domain knowledge over time. Skills are a reuse layer on top of that knowledge, used to speed up repeated execution patterns.
 
 <p align="center">
   <img src="assets/hero_screenshot.jpg" alt="MindAct Desktop — Brain Graph × Claude Code Terminal" width="100%" style="border-radius: 10px;">
@@ -76,10 +78,27 @@ Most AI coding assistants treat every task the same way: you type, it generates.
 User task → Skill Match (Stage 0) → (if miss) Dependency Analysis → Knowledge Retrieval → Enriched Prompt → Claude
 ```
 
+**What you experience as a user (one task lifecycle):**
+
+1. You type a task in the terminal.
+2. MindAct checks whether an existing skill already fits this task.
+3. If a skill is matched, you choose:
+   - `Apply this Skill` (guided execution), or
+   - `Without skill` (send original task directly).
+4. If no skill is matched, MindAct runs dependency analysis and retrieval.
+5. You get a report with:
+   - covered dependencies,
+   - missing dependencies,
+   - confidence level (`High/Medium/Low`).
+6. If AI output is uncertain (missing deps, broken chains, or low confidence), you fill or correct knowledge first.
+7. MindAct helps you do that quickly via ghost-node templates and KB drafting.
+8. After knowledge is improved, you re-run analysis, then Execute with stronger context.
+
 **Core features:**
 
 - **Claude Code terminal** — full interactive Claude Code session, embedded in the app
-- **Skill-first execution** — tries to match existing skills before knowledge analysis; when matched, execute directly with skill guidance
+- **Knowledge-first workflow** — every task can feed back into your knowledge base and improve future tasks
+- **Skill reuse layer** — reusable skills accelerate repeated tasks, but do not replace knowledge accumulation
 - **Skills workspace** — dedicated `Skills` tab to browse/edit skill files under configured `skills_path`
 - **Obsidian-style Brain Graph** — your knowledge base as a live, interactive `[[wiki-linked]]` graph. Nodes glow when they're relevant to your current task
 - **Dependency Analysis engine** — 4-stage LLM pipeline that detects what your task needs, matches it against your KB, and scores confidence before execution
@@ -87,17 +106,21 @@ User task → Skill Match (Stage 0) → (if miss) Dependency Analysis → Knowle
 - **Streaming analysis log** — real-time SSE progress visible as a floating overlay on the graph, not a modal blocking your work
 - **Context-enriched execution** — when you hit Execute, Claude receives your task plus all relevant KB content, automatically
 - **Knowledge templates** — when knowledge is missing, MindAct generates a domain-specific template (not a blank file) so you know exactly what to write
-- **Knowledge → Skill conversion** — after analysis, generate a reusable skill draft, edit it, and save as `skills_path/<skill-name>/SKILL.md`
+- **Knowledge → Skill conversion** — convert validated knowledge into reusable skill drafts when repetition appears
 
-**Algorithm highlights (retrieval + confidence):**
 
-- **Hybrid retrieval** — lexical overlap + lightweight semantic match (char n-gram) + 1-2 hop graph proximity over `[[wiki-links]]`.
-- **Domain query expansion** — task terms are expanded through a domain dictionary before retrieval.
-- **Dependency-aware matching** — dependency decomposition first, file matching second; decomposition retries with high-relevance file hints when needed.
-- **Multi-hop dependency reasoning** — estimates cross-dependency chain integrity and highlights broken critical chains.
-- **Confidence stack** — combines dependency coverage, evidence quality, and noise penalty; supports optional post-hoc temperature calibration (`calib:collect`, `calib:fit`).
-- **Stability controls** — low-temperature analysis calls + deterministic post-processing + analysis memory reuse for similar tasks.
-- **Methods referenced** — inspired by CRAG, Self-RAG, GraphRAG, NAACL 2026 noise-aware calibration, and Bayesian RAG uncertainty ideas.
+
+---
+
+## The intelligence behind it
+
+MindAct builds a live knowledge graph from your `[[wiki-linked]]` markdown files, and that graph is what sets the retrieval layer apart. Rather than a flat similarity search, it combines lexical relevance, character n-gram semantic similarity, and structural proximity over wiki-links — so files that are both topically relevant and graph-connected to the strongest candidates rank higher. Query terms are also expanded through domain-specific vocabularies before retrieval, which means narrow engineering jargon finds the right files even when the exact wording doesn't match.
+
+Dependencies are decomposed explicitly, not implied. If the initial pass comes back empty or too vague, the system fetches the most relevant files first and uses them as context to retry — a self-correcting loop that significantly reduces dead-end analysis on ambiguous prompts. The resulting matches are post-processed deterministically: coverage normalized, duplicates removed, gaps filled by local retrieval fallback, and results sorted stably. The same task produces the same analysis across runs.
+
+Confidence is a weighted blend of dependency coverage, evidence quality measured by how closely retrieved content aligns with each dependency's description, and a noise penalty for missing items. Critical dependencies carry 3× the weight of optional ones. Beyond that, MindAct verifies whether critical dependencies form a connected chain in the knowledge graph — because having the right files isn't enough if they don't logically connect to each other. Broken chains are surfaced explicitly before execution, not discovered mid-run.
+
+The design draws from [CRAG](https://arxiv.org/abs/2401.15884)'s evaluator-based retrieval correction, [GraphRAG](https://arxiv.org/abs/2404.16130)'s graph-structured evidence retrieval, and [Self-RAG](https://arxiv.org/abs/2310.11511)'s selective re-generation principle. Confidence scoring follows post-hoc calibration practices. The goal isn't theoretical completeness — it's making the output reliable enough to act on in engineering workflows where a wrong answer has real cost.
 
 ---
 
@@ -132,33 +155,6 @@ User task → Skill Match (Stage 0) → (if miss) Dependency Analysis → Knowle
 | Knowledge graph | D3.js force-directed (Obsidian-style `[[links]]`) |
 | Code editor | CodeMirror 6 |
 | AI | Anthropic Claude API (`claude-sonnet-4-6` / `claude-haiku-4-5`) |
-
----
-
-## Skill Workflow (End-to-End)
-
-MindAct now supports a complete skill lifecycle:
-
-1. **Skill-first match (Stage 0)**  
-   Before dependency analysis, the task is matched against existing skills in `skills_path`.
-2. **If matched**  
-   The report shows matched skill information and two actions:
-   - `Apply this Skill` (execute with skill guidance)
-   - `Without skill` (send original task to CLI directly)
-3. **If not matched**  
-   MindAct runs dependency analysis and retrieval as usual.
-4. **Generate skill from knowledge**  
-   In the report, click `Generate Skill Template` to create a draft from the current analysis result.
-5. **Edit and save**  
-   Review/edit draft content in the modal, then save to:
-   - `skills_path/<slug>/SKILL.md`
-6. **Reuse in future tasks**  
-   The new skill is available for future Stage 0 matching.
-
-UI behavior:
-- The Generate Skill button is disabled during generation to prevent double-click duplication.
-- Confidence percentage is hidden from users; only level (`High/Medium/Low`) is shown.
-- Project and Skills file trees default to collapsed folders.
 
 ---
 
@@ -241,23 +237,13 @@ On first launch, MindAct will ask you to configure:
   <em>Dependency analysis — streaming log, ghost nodes (red dashed), and confidence report</em>
 </p>
 
-The analysis runs after skill matching. If no skill is matched, it executes a 4-stage LLM pipeline (typically 3–8 seconds):
+If no skill is matched, MindAct runs a pipeline that first identifies whether the task is domain-specific, then decomposes it into concrete knowledge dependencies — not vague categories, but specific modules like "joint angle constraints" or "sensor fusion algorithms". These dependencies are matched against your knowledge base using hybrid retrieval that combines lexical scoring, character n-gram semantic similarity, and graph proximity over `[[wiki-links]]`. If the first decomposition pass comes back weak, the system fetches top-ranked files as hints and retries — a self-correcting step that significantly reduces empty or misaligned results.
 
-1. **Domain detection** — is this a domain-specific task (robotics, physics, etc.)?
-2. **Dependency decomposition** — what knowledge modules does this task require?
-3. **KB matching** — which of your existing files cover each dependency?
-4. **Confidence scoring** — critical deps weight 3×, partial coverage = 50%
+Confidence is then computed as a weighted blend of dependency coverage (critical items weighted 3×), evidence quality measured by token overlap between the retrieved content and the dependency description, and a noise penalty for uncovered or weakly covered items. This approach draws from CRAG's evaluator design and noise-aware confidence calibration work, producing a three-level output — **High / Medium / Low** — that reflects actual execution readiness rather than a raw percentage.
 
-**Confidence levels:**
-- ≥ 75% → **High** — `▶ Execute` with enriched prompt
-- 40–74% → **Medium** — `▶ Execute` with missing dep warning
-- < 40% → **Low** — `⚠ Execute anyway` or fill gaps first
+Beyond file presence, MindAct also checks whether the critical dependencies form a connected chain through the knowledge graph. A plan that has all the files but no logical continuity between them is caught here and flagged before execution.
 
-Additional reasoning/stability:
-- **Multi-hop reasoning** checks whether critical dependency chains are connected.
-- **Low-temperature inference** and deterministic match stabilization reduce run-to-run randomness.
-
-**Ghost nodes** appear for missing deps. Clicking opens a new markdown file pre-filled with an AI-generated template specific to that dependency and your task context.
+When knowledge is missing, ghost nodes appear in the Brain Graph as hollow red circles. Clicking one opens a structured markdown template pre-filled with the specific fields that dependency requires — not a blank file, but a guided scaffold tied to your task context. This is the primary way MindAct guides users to expand their knowledge base deliberately rather than randomly.
 
 ---
 
