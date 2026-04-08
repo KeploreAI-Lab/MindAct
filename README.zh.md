@@ -202,4 +202,4 @@ bun test tests/api/          # 需要服务器运行中
 
 ## 开源协议
 
-MIT
+AGPL-3.0

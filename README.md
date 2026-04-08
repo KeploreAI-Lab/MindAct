@@ -1,4 +1,18 @@
-# MindAct
+<p align="center">
+  <img src="assets/keploreai-logo.png" alt="KeploreAI" height="38" style="filter: invert(1);">
+  &nbsp;&nbsp;&times;&nbsp;&nbsp;
+  <strong style="font-size: 28px;">MindAct</strong>
+</p>
+
+<p align="center">
+  <code>Claude Code</code> &nbsp;
+  <code>AI Agent</code> &nbsp;
+  <code>Obsidian</code> &nbsp;
+  <code>RAG</code> &nbsp;
+  <code>Knowledge Graph</code> &nbsp;
+  <code>Dependency Analysis</code> &nbsp;
+  <a href="https://discord.gg/hpq9t4QQ">💬 Discord</a>
+</p>
 
 > **From ReAct to MindAct.** ReAct taught agents to reason before acting. MindAct takes it further — before your agent acts, it knows what it doesn't know.
 
@@ -7,6 +21,12 @@
 Stop sending naked prompts to Claude. MindAct automatically retrieves the right context from your knowledge base, scores execution confidence, and surfaces knowledge gaps before you run — so Claude always has what it needs to get the job done right.
 
 > 中文文档请见 [README.zh.md](./README.zh.md)
+
+<p align="center">
+  <img src="assets/hero_screenshot.jpg" alt="MindAct Desktop — Brain Graph × Claude Code Terminal" width="100%" style="border-radius: 10px;">
+  <br>
+  <em>MindAct desktop — Brain Graph (left) × Claude Code terminal (right)</em>
+</p>
 
 ---
 
@@ -155,6 +175,12 @@ On first launch, MindAct will ask you to configure:
 
 ## Dependency Analysis
 
+<p align="center">
+  <img src="assets/dependency_analysis.jpg" alt="Dependency Analysis — streaming log, ghost nodes, confidence report" width="100%" style="border-radius: 10px;">
+  <br>
+  <em>Dependency analysis — streaming log, ghost nodes (red dashed), and confidence report</em>
+</p>
+
 The analysis runs a 4-stage LLM pipeline (all `claude-haiku` for speed, typically 3–8 seconds):
 
 1. **Domain detection** — is this a domain-specific task (robotics, physics, etc.)?
@@ -202,4 +228,10 @@ bun test tests/api/          # requires running server
 
 ## License
 
-MIT
+AGPL-3.0
+
+---
+
+<p align="center">
+  Built by <a href="https://github.com/KeploreAI-Lab">KeploreAI Lab</a> · <a href="https://discord.gg/hpq9t4QQ">💬 Join our Discord</a>
+</p>
