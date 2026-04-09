@@ -12,9 +12,11 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.82.0",
+    "adm-zip": "^0.5.17",
     "node-pty": "^1.0.0"
   },
   "devDependencies": {
+    "@types/adm-zip": "^0.5.8",
     "@types/node": "^20.0.0",
     "concurrently": "^8.2.0",
     "electron": "^40.8.5"

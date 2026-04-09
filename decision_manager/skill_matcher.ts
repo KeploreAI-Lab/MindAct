@@ -1,5 +1,6 @@
 import { existsSync, readdirSync, readFileSync } from "fs";
 import { join } from "path";
+import AdmZip from "adm-zip";
 
 export interface SkillMatch {
   id: string;
@@ -56,18 +57,34 @@ ${task}`;
 
 function loadSkills(skillsRoot: string): SkillMeta[] {
   if (!existsSync(skillsRoot)) return [];
-  const entries = readdirSync(skillsRoot, { withFileTypes: true })
-    .filter(e => e.isDirectory())
-    .map(e => e.name);
-
   const out: SkillMeta[] = [];
-  for (const dir of entries) {
-    const skillPath = join(skillsRoot, dir, "SKILL.md");
-    if (!existsSync(skillPath)) continue;
-    const raw = safeRead(skillPath);
-    if (!raw.trim()) continue;
-    const { name, description, body } = parseSkill(raw, dir);
-    out.push({ id: dir, name, description, path: skillPath, body });
+
+  for (const entry of readdirSync(skillsRoot, { withFileTypes: true })) {
+    if (entry.isDirectory()) {
+      // Unpacked skill: skillsRoot/<name>/SKILL.md
+      const skillPath = join(skillsRoot, entry.name, "SKILL.md");
+      if (!existsSync(skillPath)) continue;
+      const raw = safeRead(skillPath);
+      if (!raw.trim()) continue;
+      const { name, description, body } = parseSkill(raw, entry.name);
+      out.push({ id: entry.name, name, description, path: skillPath, body });
+    } else if (entry.isFile() && entry.name.endsWith(".skill")) {
+      // Packed skill: ZIP archive containing <skill-name>/SKILL.md
+      const zipPath = join(skillsRoot, entry.name);
+      const id = entry.name.replace(/\.skill$/, "");
+      try {
+        const zip = new AdmZip(zipPath);
+        // Find SKILL.md anywhere inside the archive
+        const skillEntry = zip.getEntries().find(e => e.entryName.endsWith("SKILL.md") && !e.isDirectory);
+        if (!skillEntry) continue;
+        const raw = skillEntry.getData().toString("utf-8");
+        if (!raw.trim()) continue;
+        const { name, description, body } = parseSkill(raw, id);
+        out.push({ id, name, description, path: zipPath, body });
+      } catch {
+        // Corrupt or unreadable ZIP — skip silently
+      }
+    }
   }
   return out;
 }
