@@ -33,7 +33,11 @@ ensureSpawnHelperExecutable();
 function isExecutable(cmd) {
   const { execSync } = require('child_process');
   try {
-    execSync(`which ${JSON.stringify(cmd)} 2>/dev/null || test -x ${JSON.stringify(cmd)}`, { stdio: 'ignore' });
+    if (process.platform === 'win32') {
+      execSync(`where ${JSON.stringify(cmd)}`, { stdio: 'ignore' });
+    } else {
+      execSync(`which ${JSON.stringify(cmd)} 2>/dev/null || test -x ${JSON.stringify(cmd)}`, { stdio: 'ignore' });
+    }
     return true;
   } catch {
     return false;
@@ -43,14 +47,20 @@ function isExecutable(cmd) {
 // Resolve the CLI binary — prefer project-local physmind, then CLAUDE_BIN env
 function findClaude() {
   const os = require('os');
+  const isWin = process.platform === 'win32';
   const candidates = [
-    // Project-local build (setup.sh compiles this)
-    path.join(__dirname, 'cli', 'rust', 'target', 'release', 'physmind'),
+    // Project-local build (setup compiles this)
+    path.join(__dirname, 'cli', 'rust', 'target', 'release', isWin ? 'physmind.exe' : 'physmind'),
     // User's claw-code checkout (fallback for dev machines)
-    path.join(os.homedir(), 'claw-code', 'rust', 'target', 'release', 'physmind'),
-    path.join(os.homedir(), 'claw-code', 'rust', 'target', 'release', 'claw'),
+    path.join(os.homedir(), 'claw-code', 'rust', 'target', 'release', isWin ? 'physmind.exe' : 'physmind'),
+    path.join(os.homedir(), 'claw-code', 'rust', 'target', 'release', isWin ? 'claw.exe' : 'claw'),
     // Explicit override via env
     process.env.CLAUDE_BIN,
+    // Windows npm global claude
+    ...(isWin ? [
+      path.join(os.homedir(), 'AppData', 'Roaming', 'npm', 'claude.cmd'),
+      path.join(os.homedir(), 'AppData', 'Local', 'npm', 'claude.cmd'),
+    ] : []),
     // System PATH fallback
     'claude',
   ];
