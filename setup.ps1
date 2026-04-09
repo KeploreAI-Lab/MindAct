@@ -52,23 +52,19 @@ if (-not $hasVS) {
     ok "C++ Build Tools found"
 }
 
-# Load the full MSVC build environment (PATH + LIB + INCLUDE) via the correct vcvars bat
+# Detect architecture -- on ARM64 we build an x64 binary (runs via Windows-on-ARM compat)
+$isARM64 = ($env:PROCESSOR_ARCHITECTURE -eq "ARM64")
+if ($isARM64) {
+    Write-Host "  ARM64 machine detected -- will build x64 CLI (runs via WoA compatibility)"
+    $script:cargoTarget = "x86_64-pc-windows-msvc"
+} else {
+    $script:cargoTarget = ""
+}
+
+# Load the full MSVC x64 build environment via vcvars64.bat
 $vsInstallPath = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath 2>$null
 if ($vsInstallPath) {
-    # Pick the right vcvars batch for this machine's architecture
-    $arch = (Get-WmiObject Win32_Processor | Select-Object -First 1).Architecture
-    # 9 = x64, 12 = ARM64
-    if ($arch -eq 12 -or $env:PROCESSOR_ARCHITECTURE -eq "ARM64") {
-        $vcvars = "$vsInstallPath\VC\Auxiliary\Build\vcvarsarm64.bat"
-        Write-Host "  ARM64 machine detected -- using vcvarsarm64.bat"
-    } else {
-        $vcvars = "$vsInstallPath\VC\Auxiliary\Build\vcvars64.bat"
-        Write-Host "  x64 machine detected -- using vcvars64.bat"
-    }
-    if (-not (Test-Path $vcvars)) {
-        # Fallback: try vcvars64.bat
-        $vcvars = "$vsInstallPath\VC\Auxiliary\Build\vcvars64.bat"
-    }
+    $vcvars = "$vsInstallPath\VC\Auxiliary\Build\vcvars64.bat"
     if (Test-Path $vcvars) {
         $envDump = cmd /c "`"$vcvars`" && set" 2>$null
         foreach ($line in $envDump) {
@@ -77,9 +73,9 @@ if ($vsInstallPath) {
                 [System.Environment]::SetEnvironmentVariable($k, $v, "Process")
             }
         }
-        ok "MSVC environment loaded"
+        ok "MSVC x64 environment loaded"
     } else {
-        die "vcvars bat not found in $vsInstallPath -- ensure C++ workload is installed"
+        die "vcvars64.bat not found -- ensure C++ workload is installed"
     }
 }
 
@@ -143,12 +139,20 @@ ok "Submodule ready"
 Write-Host ""
 Write-Host "Building physmind CLI..."
 Push-Location cli\rust
-cargo build --release
+if ($script:cargoTarget -ne "") {
+    # Ensure the x64 target is installed in rustup
+    rustup target add $script:cargoTarget
+    cargo build --release --target $script:cargoTarget
+    $cliBinSrc = "target\$script:cargoTarget\release\physmind.exe"
+} else {
+    cargo build --release
+    $cliBinSrc = "target\release\physmind.exe"
+}
 Pop-Location
 
-$cliBin = "cli\rust\target\release\physmind.exe"
+$cliBin = "cli\rust\$cliBinSrc"
 if (-not (Test-Path $cliBin)) {
-    die "CLI build failed -- physmind.exe not found"
+    die "CLI build failed -- physmind.exe not found at $cliBin"
 }
 ok "CLI built: $cliBin"
 
