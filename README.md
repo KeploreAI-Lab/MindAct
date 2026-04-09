@@ -20,7 +20,7 @@
 
 </div>
 
-> **From ReAct to MindAct.** ReAct taught agents to reason before acting. MindAct takes it further — before your agent acts, it knows what it doesn't know.
+> **From ReAct to MindAct.** [ReAct](https://arxiv.org/abs/2210.03629) (Reasoning + Acting) is the standard paradigm behind most AI agents — interleaving chain-of-thought reasoning with tool use. MindAct takes it further: before your agent acts, it checks what it knows, what it doesn't, and how confident it should be.
 
 **MindAct** is a desktop AI workspace that combines a Claude Code terminal, a built-in Obsidian-style knowledge graph, and an intelligent Dependency Analysis engine — purpose-built for engineers working on domain-specific projects like robotics, physics simulation, and control systems.
 
@@ -126,7 +126,7 @@ The design draws from [CRAG](https://arxiv.org/abs/2401.15884)'s evaluator-based
 
 ## From ReAct to MindAct
 
-**ReAct** (Reasoning + Acting) was a breakthrough: give agents the ability to think step-by-step before taking action.
+**[ReAct](https://arxiv.org/abs/2210.03629)** (Reasoning + Acting, Yao et al. 2022) is the paradigm behind most modern AI agents: interleave chain-of-thought *reasoning* with *tool actions* in a loop, so the model can plan, act, observe, and adjust. It's how agents like Claude Code work under the hood — think step-by-step, then call a tool, then reason about the result.
 
 **MindAct** adds the missing layer: *structured domain memory*.
 
