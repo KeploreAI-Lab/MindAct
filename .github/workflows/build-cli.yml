@@ -8,6 +8,9 @@ on:
       - '.github/workflows/build-cli.yml'
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build-windows:
     runs-on: windows-latest
@@ -42,8 +45,11 @@ jobs:
           path: cli/rust/target/x86_64-pc-windows-msvc/release/physmind.exe
           retention-days: 90
 
-      - name: Upload to latest release (if tagged)
-        if: startsWith(github.ref, 'refs/tags/')
+      - name: Publish to rolling "latest-windows" release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: latest-windows
+          name: "Latest Windows Build"
+          body: "Auto-updated on every push to main. Download physmind.exe and put it anywhere on your PATH."
+          prerelease: true
           files: cli/rust/target/x86_64-pc-windows-msvc/release/physmind.exe

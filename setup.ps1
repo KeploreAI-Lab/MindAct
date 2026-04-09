@@ -83,7 +83,7 @@ try {
 }
 
 # Simpler: download from releases if available, else guide user
-$releaseUrl = "https://github.com/$REPO/releases/latest/download/physmind.exe"
+$releaseUrl = "https://github.com/$REPO/releases/download/latest-windows/physmind.exe"
 Write-Host "  Trying latest release: $releaseUrl"
 try {
     Invoke-WebRequest -Uri $releaseUrl -OutFile $dest -UseBasicParsing
