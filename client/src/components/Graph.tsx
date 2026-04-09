@@ -2,7 +2,6 @@ import React, { useEffect, useRef } from "react";
 import { useStore } from "../store";
 import { createGraphRenderer } from "../graph_manager";
 import type { GraphNode, GraphData, GraphRendererHandle, HighlightNode } from "../graph_manager";
-import GraphLogDrawer from "./GraphLogDrawer";
 import { t } from "../i18n";
 
 interface GraphProps {
@@ -88,8 +87,6 @@ export default function Graph({
         ref={svgRef}
         style={{ flex: 1, width: "100%", display: loading || error ? "none" : "block" }}
       />
-      {/* Log drawer — always mounted so it can receive events even when collapsed */}
-      <GraphLogDrawer />
     </div>
   );
 }

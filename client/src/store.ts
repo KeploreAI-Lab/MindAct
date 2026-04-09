@@ -9,6 +9,7 @@ export interface Config {
   project_path: string;
   skills_path: string;
   panel_ratio: number;
+  kplr_token?: string;
 }
 
 export interface TreeNode {
@@ -117,7 +118,7 @@ export const useStore = create<AppState>((set) => ({
   isThinking: false,
   uiLanguage: "en",
 
-  analysisMode: true,
+  analysisMode: false,
   analysisRunning: false,
   graphHighlights: [],
   ghostNodes: [] as { name: string; template: string }[],

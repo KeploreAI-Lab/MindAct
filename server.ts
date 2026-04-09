@@ -305,8 +305,12 @@ const PTY_WORKER = join(import.meta.dir, "pty-worker.cjs");
 function spawnPty(ws: import("bun").ServerWebSocket<unknown>, projectPath: string) {
   const existing = ptySessions.get(ws);
   if (existing) {
-    try { existing.worker.kill(); } catch {}
+    // Mark session as superseded BEFORE killing — the stdout stream loop
+    // checks ptySessions to decide whether to send the exit message, so
+    // removing it here prevents the old worker's exit from reaching the client
+    // while the new worker is already running.
     ptySessions.delete(ws);
+    try { existing.worker.kill(); } catch {}
   }
 
   const cwd = (projectPath && existsSync(projectPath)) ? projectPath : homedir();
@@ -325,6 +329,11 @@ function spawnPty(ws: import("bun").ServerWebSocket<unknown>, projectPath: strin
     try { ws.send(JSON.stringify({ type: "data", data: `\r\n\x1b[31m[Error] ${err.message}\x1b[0m\r\n` })); } catch {}
     return null;
   }
+
+  // Register session BEFORE starting the stream loop so the exit guard works
+  const session: PtySession = { worker, ws };
+  ptySessions.set(ws, session);
+  console.log("[PTY] Worker started, pid:", worker.pid);
 
   // Stream stdout (newline-delimited JSON) → WebSocket
   (async () => {
@@ -351,13 +360,12 @@ function spawnPty(ws: import("bun").ServerWebSocket<unknown>, projectPath: strin
       console.error("[PTY] stream error:", e.message);
     }
     console.log(`[PTY] worker done, sent ${msgCount} msgs`);
-    try { ws.send(JSON.stringify({ type: "exit" })); } catch {}
-    ptySessions.delete(ws);
+    // Only send exit if this worker is still the active session (not superseded by restart)
+    if (ptySessions.get(ws)?.worker === worker) {
+      try { ws.send(JSON.stringify({ type: "exit" })); } catch {}
+      ptySessions.delete(ws);
+    }
   })();
-
-  const session: PtySession = { worker, ws };
-  ptySessions.set(ws, session);
-  console.log("[PTY] Worker started, pid:", worker.pid);
   return session;
 }
 
@@ -393,6 +401,10 @@ const server = serve({
           writeConfig(normalized);
           if (body.kplr_token?.startsWith("kplr-")) {
             saveKplrCredentials(body.kplr_token);
+            // Restart all active PTY sessions so they pick up the new key
+            for (const [ws] of ptySessions) {
+              try { ws.send(JSON.stringify({ type: "restart" })); } catch {}
+            }
           }
           return jsonResponse({ ok: true });
         });

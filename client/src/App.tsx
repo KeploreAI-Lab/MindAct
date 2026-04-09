@@ -8,6 +8,7 @@ import Graph from "./components/Graph";
 import HistoryPanel from "./components/HistoryPanel";
 import BrainInspect from "./components/BrainInspect";
 import { t } from "./i18n";
+import GraphLogDrawer from "./components/GraphLogDrawer";
 
 export default function App() {
   const isConfigComplete = (c: any): c is import("./store").Config =>
@@ -171,7 +172,9 @@ export default function App() {
           borderRight: graphMode ? "none" : "1px solid #444",
           overflow: "hidden",
           transition: "width 0.2s ease",
+          position: "relative",
         }}>
+          <GraphLogDrawer />
           {graphMode ? (
             <Graph onExitFullscreen={() => { setGraphMode(false); setActiveTab("kb"); setKbViewMode("brain"); }} onBrainInspect={() => setShowBrainInspect(true)} />
           ) : (
@@ -232,7 +235,7 @@ export default function App() {
         <div style={modalOverlayStyle} onClick={() => setShowSettings(false)}>
           <div style={modalStyle} onClick={e => e.stopPropagation()}>
             <h3 style={{ marginBottom: 16, color: "#d4d4d4" }}>{t(uiLanguage, "settings")}</h3>
-            <SettingsForm config={config} onSave={(c) => {
+            <SettingsForm config={config ?? { vault_path: "", project_path: "", skills_path: "", panel_ratio: 0.45 }} onSave={(c) => {
               setConfig(c);
               loadVault(c.vault_path);
               loadProject(c.project_path);
@@ -297,10 +300,20 @@ function SettingsForm({ config, onSave }: { config: import("./store").Config; on
   const [vault, setVault] = useState(config.vault_path);
   const [project, setProject] = useState(config.project_path);
   const [skills, setSkills] = useState(config.skills_path);
+  const [token, setToken] = useState(config.kplr_token ?? "");
+  const [showToken, setShowToken] = useState(false);
+
+  React.useEffect(() => {
+    setVault(config.vault_path);
+    setProject(config.project_path);
+    setSkills(config.skills_path);
+    setToken(config.kplr_token ?? "");
+  }, [config]);
 
   const save = () => {
-    const c = { vault_path: vault, project_path: project, skills_path: skills, panel_ratio: config.panel_ratio };
-    fetch("/api/config", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(c) })
+    const c: import("./store").Config = { vault_path: vault, project_path: project, skills_path: skills, panel_ratio: config.panel_ratio, kplr_token: token || undefined };
+    const body: Record<string, unknown> = { ...c };
+    fetch("/api/config", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) })
       .then(() => onSave(c));
   };
 
@@ -312,6 +325,19 @@ function SettingsForm({ config, onSave }: { config: import("./store").Config; on
       <input value={project} onChange={e => setProject(e.target.value)} style={inputStyle} />
       <label style={{ color: "#888", fontSize: 11 }}>Skills Path</label>
       <input value={skills} onChange={e => setSkills(e.target.value)} style={inputStyle} />
+      <label style={{ color: "#888", fontSize: 11 }}>PhysMind Key (kplr-...)</label>
+      <div style={{ position: "relative" }}>
+        <input
+          type={showToken ? "text" : "password"}
+          value={token}
+          onChange={e => setToken(e.target.value)}
+          placeholder="kplr-xxxxxxxxxxxx"
+          style={{ ...inputStyle, paddingRight: 60 }}
+        />
+        <button onClick={() => setShowToken(v => !v)} style={{ position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", color: "#666", cursor: "pointer", fontSize: 11 }}>
+          {showToken ? "Hide" : "Show"}
+        </button>
+      </div>
       <button onClick={save} style={{ ...btnStyle(true), alignSelf: "flex-end", marginTop: 8 }}>{t(uiLanguage, "save")}</button>
     </div>
   );
