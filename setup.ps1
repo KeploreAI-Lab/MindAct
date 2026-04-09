@@ -14,7 +14,7 @@ Write-Host "======================================"
 
 # -- 1. Visual Studio C++ Build Tools (node-pty) -----------------
 Write-Host ""
-Write-Host "Checking C++ build tools..."
+Write-Host "Checking C++ build tools (required for Rust + node-pty)..."
 $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
 $hasVS = $false
 if (Test-Path $vswhere) {
@@ -22,12 +22,24 @@ if (Test-Path $vswhere) {
     if ($vsPath) { $hasVS = $true }
 }
 if (-not $hasVS) {
-    warn "Visual Studio C++ Build Tools not found."
-    Write-Host "  node-pty requires them. Install from:"
-    Write-Host "  https://visualstudio.microsoft.com/visual-cpp-build-tools/"
-    Write-Host "  (Select 'Desktop development with C++')"
-    Write-Host ""
-    Read-Host "Press Enter to continue anyway, or Ctrl+C to abort"
+    warn "Visual Studio C++ Build Tools not found -- attempting auto-install via winget..."
+    if (Get-Command winget -ErrorAction SilentlyContinue) {
+        winget install --id Microsoft.VisualStudio.2022.BuildTools --silent --override "--quiet --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended"
+        # Re-check
+        if (Test-Path $vswhere) {
+            $vsPath = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath 2>$null
+            if ($vsPath) { $hasVS = $true }
+        }
+    }
+    if (-not $hasVS) {
+        Write-Host ""
+        Write-Host "[ERR] C++ Build Tools are required but could not be installed automatically." -ForegroundColor Red
+        Write-Host "      Please install manually, then re-run setup.ps1:" -ForegroundColor Red
+        Write-Host "      https://visualstudio.microsoft.com/visual-cpp-build-tools/" -ForegroundColor Yellow
+        Write-Host "      (Select 'Desktop development with C++')" -ForegroundColor Yellow
+        exit 1
+    }
+    ok "C++ Build Tools installed"
 } else {
     ok "C++ Build Tools found"
 }
