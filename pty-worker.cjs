@@ -48,22 +48,23 @@ function isExecutable(cmd) {
 function findClaude() {
   const os = require('os');
   const isWin = process.platform === 'win32';
+  const bin = isWin ? 'physmind.exe' : 'physmind';
   const candidates = [
-    // Project-local build (setup compiles this)
-    path.join(__dirname, 'cli', 'rust', 'target', 'release', isWin ? 'physmind.exe' : 'physmind'),
-    // User's claw-code checkout (fallback for dev machines)
-    path.join(os.homedir(), 'claw-code', 'rust', 'target', 'release', isWin ? 'physmind.exe' : 'physmind'),
-    path.join(os.homedir(), 'claw-code', 'rust', 'target', 'release', isWin ? 'claw.exe' : 'claw'),
     // Explicit override via env
     process.env.CLAUDE_BIN,
-    // Windows npm global claude
-    ...(isWin ? [
-      path.join(os.homedir(), 'AppData', 'Roaming', 'npm', 'claude.cmd'),
-      path.join(os.homedir(), 'AppData', 'Local', 'npm', 'claude.cmd'),
-    ] : []),
-    // System PATH fallback
-    'claude',
-  ];
+    // setup.ps1 copies physmind.exe here
+    isWin ? path.join(os.homedir(), '.cargo', 'bin', 'physmind.exe') : null,
+    // setup.sh links physmind here
+    isWin ? null : '/usr/local/bin/physmind',
+    // Project-local build
+    path.join(__dirname, 'cli', 'rust', 'target', 'release', bin),
+    // x64 cross-compiled target (ARM64 Windows)
+    isWin ? path.join(__dirname, 'cli', 'rust', 'target', 'x86_64-pc-windows-msvc', 'release', 'physmind.exe') : null,
+    // Dev machine claw-code checkout
+    path.join(os.homedir(), 'claw-code', 'rust', 'target', 'release', bin),
+    // System PATH
+    'physmind',
+  ].filter(Boolean);
   for (const c of candidates) {
     if (!c) continue;
     if (isExecutable(c)) return c;
