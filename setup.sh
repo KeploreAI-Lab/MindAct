@@ -65,7 +65,7 @@ if ! command -v cargo &>/dev/null; then
 fi
 cd cli/rust
 cargo build --release 2>&1 | tail -3
-CLI_BIN="$(pwd)/target/release/claw"
+CLI_BIN="$(pwd)/target/release/physmind"
 [ -f "$CLI_BIN" ] || die "CLI build failed — binary not found at $CLI_BIN"
 cd ../..
 ok "CLI built: $CLI_BIN"
