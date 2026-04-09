@@ -180,8 +180,12 @@ mindact/
 ### 安装
 
 ```bash
+# 安装 Bun（macOS、Linux、WSL）
+curl -fsSL https://bun.sh/install | bash
+
+# 克隆并安装依赖
 git clone https://github.com/KeploreAI-Lab/MindAct
-cd mindact
+cd MindAct
 bun install
 cd client && bun install && cd ..
 ```
