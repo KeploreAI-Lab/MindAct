@@ -40,21 +40,20 @@ function isExecutable(cmd) {
   }
 }
 
-// Resolve the claude CLI — check common install locations
+// Resolve the CLI binary — prefer project-local physmind, then CLAUDE_BIN env
 function findClaude() {
-  const candidates = [
-    process.env.CLAUDE_BIN,           // user override via env
-    'claude',                          // system PATH (works if globally installed)
-  ];
-  // Also check common install paths
   const os = require('os');
-  const path = require('path');
-  candidates.push(
-    path.join(os.homedir(), '.local', 'bin', 'claude'),
-    path.join(os.homedir(), '.npm-global', 'bin', 'claude'),
-    '/usr/local/bin/claude',
-    '/opt/homebrew/bin/claude',
-  );
+  const candidates = [
+    // Project-local build (setup.sh compiles this)
+    path.join(__dirname, 'cli', 'rust', 'target', 'release', 'physmind'),
+    // User's claw-code checkout (fallback for dev machines)
+    path.join(os.homedir(), 'claw-code', 'rust', 'target', 'release', 'physmind'),
+    path.join(os.homedir(), 'claw-code', 'rust', 'target', 'release', 'claw'),
+    // Explicit override via env
+    process.env.CLAUDE_BIN,
+    // System PATH fallback
+    'claude',
+  ];
   for (const c of candidates) {
     if (!c) continue;
     if (isExecutable(c)) return c;
