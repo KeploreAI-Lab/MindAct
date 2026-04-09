@@ -195,38 +195,53 @@ mindact/
 
 ## Getting started
 
-### Prerequisites
+### macOS / Linux
 
-- [Bun](https://bun.sh) ≥ 1.0
+**Prerequisites**
 - [Node.js](https://nodejs.org) ≥ 18 (for node-pty)
-- [Rust + Cargo](https://rustup.rs) (to build the CLI)
-- [Electron](https://electronjs.org)
 - A KeploreAI key (`kplr-...`) — enter it in **Settings** after first launch
 
-### Installation
-
 ```bash
-git clone https://github.com/KeploreAI-Lab/MindAct
+git clone --recurse-submodules https://github.com/KeploreAI-Lab/MindAct
 cd MindAct
-
-# One-shot setup: install deps + build client
-./setup.sh
+./setup.sh      # auto-installs Bun + Rust, builds CLI, installs deps
+./restart.sh    # launch
 ```
 
-`setup.sh` will:
-1. Check / install **Bun** and **Node.js ≥18**
-2. `bun install` all dependencies (root + client)
-3. Build the React client → `client/dist/`
-4. Check for the Claude CLI and print install instructions if missing
+`setup.sh` will automatically:
+1. Install **Bun** if missing
+2. Install **Rust/Cargo** if missing
+3. `cargo build --release` the CLI (`physmind`) and link it to `/usr/local/bin`
+4. `bun install` all dependencies and build the React client
 
-### Configuration
+---
 
-```bash
-# Start the app
-./restart.sh
+### Windows
+
+**Prerequisites**
+- [Git for Windows](https://git-scm.com/download/win)
+- [Node.js](https://nodejs.org) ≥ 18
+- [Visual Studio C++ Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/) — select **"Desktop development with C++"** (required for node-pty)
+- A KeploreAI key (`kplr-...`) — enter it in **Settings** after first launch
+
+```powershell
+git clone --recurse-submodules https://github.com/KeploreAI-Lab/MindAct
+cd MindAct
+.\setup.ps1     # auto-installs Bun + Rust, builds physmind.exe, installs deps
+.\restart.ps1   # launch
 ```
 
-On first launch, open **Settings** (top bar) and enter:
+`setup.ps1` will automatically:
+1. Install **Rust** via `rustup-init.exe` if missing
+2. Install **Bun** via PowerShell if missing
+3. `cargo build --release` the CLI (`physmind.exe`) and copy it to `%USERPROFILE%\.cargo\bin`
+4. `bun install` all dependencies and build the React client
+
+---
+
+### After launch
+
+Open **Settings** (top bar) and enter:
 - **KeploreAI key** (`kplr-...`) — saved to `~/.config/physmind/credentials`
 - **Vault path** — your private knowledge base folder
 - **Project path** — working project directory opened in the terminal

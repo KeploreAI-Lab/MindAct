@@ -176,50 +176,56 @@ mindact/
 
 ## 快速开始
 
-### 环境要求
+### macOS / Linux
 
-- [Bun](https://bun.sh) ≥ 1.0
+**前置条件**
 - [Node.js](https://nodejs.org) ≥ 18（node-pty 依赖）
-- [Rust + Cargo](https://rustup.rs)（编译 CLI）
-- [Electron](https://electronjs.org)
-- [Anthropic API Key](https://console.anthropic.com)
-
-### 安装
+- KeploreAI key（`kplr-...`）— 首次启动后在 **设置** 中填入
 
 ```bash
-# 带 submodule 克隆（包含 physmind-cli-rust）
 git clone --recurse-submodules https://github.com/KeploreAI-Lab/MindAct
 cd MindAct
-
-# 一键安装：编译 CLI binary + 安装应用依赖
-./setup.sh
+./setup.sh      # 自动安装 Bun + Rust、编译 CLI、安装依赖
+./restart.sh    # 启动
 ```
 
-`setup.sh` 会依次执行：
-1. 拉取 `cli/` submodule
-2. `cargo build --release` 编译 Rust CLI，并将 `physmind` 链接到 `/usr/local/bin`
-3. `bun install` 安装所有应用依赖
+`setup.sh` 会自动完成：
+1. 未安装 **Bun** 时自动安装
+2. 未安装 **Rust/Cargo** 时自动通过 rustup 安装
+3. `cargo build --release` 编译 CLI（`physmind`），链接到 `/usr/local/bin`
+4. `bun install` 安装所有依赖并构建 React 客户端
 
-### 配置
+---
 
-```bash
-cp .env.example .env
-# 填入你的 ANTHROPIC_API_KEY
+### Windows
+
+**前置条件**
+- [Git for Windows](https://git-scm.com/download/win)
+- [Node.js](https://nodejs.org) ≥ 18
+- [Visual Studio C++ Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/) — 勾选 **"使用 C++ 的桌面开发"**（node-pty 编译必需）
+- KeploreAI key（`kplr-...`）— 首次启动后在 **设置** 中填入
+
+```powershell
+git clone --recurse-submodules https://github.com/KeploreAI-Lab/MindAct
+cd MindAct
+.\setup.ps1     # 自动安装 Bun + Rust、编译 physmind.exe、安装依赖
+.\restart.ps1   # 启动
 ```
 
-### 启动
+`setup.ps1` 会自动完成：
+1. 未安装 **Rust** 时自动下载 `rustup-init.exe` 安装
+2. 未安装 **Bun** 时自动通过 PowerShell 安装
+3. `cargo build --release` 编译 CLI（`physmind.exe`），复制到 `%USERPROFILE%\.cargo\bin`
+4. `bun install` 安装所有依赖并构建 React 客户端
 
-```bash
-# 一键启动（构建客户端 + 服务器 + Electron）
-./restart.sh
+---
 
-# 或：仅服务器 + 前端（浏览器访问 http://localhost:5173）
-bun run dev
-```
+### 启动后配置
 
-启动后，点击顶栏 **设置** 按钮配置：
+点击顶栏 **设置** 按钮填入：
+- **KeploreAI key**（`kplr-...`）— 保存到 `~/.config/physmind/credentials`
 - **Vault 路径** — 存放私有知识库 Markdown 文件的文件夹
-- **项目路径** — 你的工作项目目录（在 Claude Code 终端中打开）
+- **项目路径** — 你的工作项目目录（在终端中打开）
 - **Skills 路径** — 复用 Skill 的根目录（也可在「专家能力」标签页中按会话加载）
 
 ---
