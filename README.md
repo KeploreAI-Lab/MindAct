@@ -345,6 +345,24 @@ bun test tests/api/          # requires running server
 
 ---
 
+## Roadmap / TODO
+
+### Skill ↔ Knowledge closed-loop (needs design)
+
+Currently, when no matching skill is found, the system falls back to KB dependency analysis and surfaces a manual "Distill to Skill" button. The ideal closed loop would be:
+
+1. **No skill match** → agent proactively tells the user *which knowledge is missing* to solve the task
+2. User supplements the KB (or ghost-node templates guide them)
+3. Agent **automatically generates a SKILL.md** from the enriched KB, saves it to `skills_path`, and syncs to `~/.physmind/skills/`
+4. Next time the same task type appears → Stage 0 hits the new skill directly
+
+Key design questions to resolve:
+- When should auto-generation trigger vs. waiting for explicit user confirmation?
+- How to evaluate whether the generated skill is "good enough" before saving?
+- Should the agent ask clarifying questions in the terminal, or surface a structured form in the UI?
+
+---
+
 ## License
 
 AGPL-3.0
