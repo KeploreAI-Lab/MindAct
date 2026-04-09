@@ -45,7 +45,7 @@ Think of MindAct like cooking:
 MindAct is knowledge-first: the primary goal is to accumulate, structure, and expand domain knowledge over time. Skills are a reuse layer on top of that knowledge, used to speed up repeated execution patterns.
 
 <p align="center">
-  <img src="assets/hero_screenshot.jpg" alt="MindAct Desktop — Brain Graph × Claude Code Terminal" width="100%" style="border-radius: 10px;">
+  <img src="assets/hero_screenshot.png" alt="MindAct Desktop — Brain Graph × Claude Code Terminal" width="100%" style="border-radius: 10px;">
   <br>
   <em>MindAct desktop — Brain Graph (left) × Claude Code terminal (right)</em>
 </p>
