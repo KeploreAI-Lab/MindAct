@@ -3,6 +3,7 @@ import { Terminal as XTerm } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import "@xterm/xterm/css/xterm.css";
 import { useStore } from "../store";
+import { t } from "../i18n";
 import type { AnalysisReport } from "../types/analysis";
 import DependencyReport from "./DependencyReport";
 
@@ -15,6 +16,7 @@ function Terminal() {
   const setTerminalBanner = useStore(s => s.setTerminalBanner);
   const { addHistoryEntry, setScrollToTerminalLine, setIsThinking } = useStore.getState();
 
+  const uiLanguage = useStore(s => s.uiLanguage);
   const analysisMode = useStore(s => s.analysisMode);
   const analysisRunning = useStore(s => s.analysisRunning);
   const analysisModeRef = useRef(analysisMode);
@@ -109,11 +111,12 @@ function Terminal() {
     clearGhostNodes();
     setLogDrawerOpen(true);
 
+    const lang = useStore.getState().uiLanguage;
     try {
       const res = await fetch("/api/dm/analyze", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ task }),
+        body: JSON.stringify({ task, lang }),
         signal: abort.signal,
       });
 
@@ -474,14 +477,14 @@ function Terminal() {
           {terminalBanner!.startsWith("!") ? (
             <>
               <span style={{ fontSize: 13, color: "#89cff0", flex: 1 }}>
-                💡 在终端里执行：
+                {t(uiLanguage, "terminal_run_hint")}{" "}
                 <code style={{
                   marginLeft: 8, background: "#0d2137", padding: "2px 8px",
                   borderRadius: 4, fontFamily: "monospace", color: "#7dd3fc",
                   userSelect: "text", cursor: "text",
                 }}>{terminalBanner!.slice(1)}</code>
               </span>
-              <button onClick={() => navigator.clipboard.writeText(terminalBanner!.slice(1))} style={smallBtnStyle}>复制</button>
+              <button onClick={() => navigator.clipboard.writeText(terminalBanner!.slice(1))} style={smallBtnStyle}>{t(uiLanguage, "copy")}</button>
             </>
           ) : (
             <span style={{ fontSize: 13, color: "#4ec9b0", flex: 1 }}>
@@ -523,8 +526,9 @@ function Terminal() {
           }}
           onApplyCreatedSkill={(rawTask) => {
             const path = createdSkillPathForReport;
+            const lang = useStore.getState().uiLanguage;
             const prompt = path
-              ? `请优先应用刚创建的技能文件执行任务。\n技能文件：${path}\n\n任务：${rawTask}`
+              ? t(lang, "apply_created_skill_prompt", { path, task: rawTask })
               : rawTask;
             submitInput(prompt);
             setAnalysisReport(null);
@@ -651,7 +655,7 @@ function Terminal() {
           <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
             <button
               onClick={() => fileInputRef.current?.click()}
-              title="上传文件或图片"
+              title={t(uiLanguage, "upload_file")}
               style={{ background: "none", border: "none", color: "#555", cursor: "pointer", fontSize: 16, padding: "2px 4px", lineHeight: 1, borderRadius: 4 }}
               onMouseEnter={e => (e.currentTarget.style.color = "#aaa")}
               onMouseLeave={e => (e.currentTarget.style.color = "#555")}

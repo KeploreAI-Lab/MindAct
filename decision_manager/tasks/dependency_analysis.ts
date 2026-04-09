@@ -19,6 +19,7 @@ import {
   computeConfidence, confidenceLevel,
   buildEnrichedPrompt,
 } from "../prompts/dependency_analysis";
+import { dm, type Lang } from "../i18n";
 
 let _calibration: { method: string; temperature: number } | null | undefined;
 function loadCalibration() {
@@ -108,6 +109,7 @@ export async function analyzeDependencies(params: {
   vaultPath: string;
   platformDir?: string;
   skillsDir?: string;
+  lang?: Lang;
   onEvent: (event: ProgressEvent) => void;
 }): Promise<AnalysisReport> {
   const {
@@ -115,17 +117,19 @@ export async function analyzeDependencies(params: {
     vaultPath,
     platformDir = join(homedir(), ".physmind", "platform"),
     skillsDir = join(process.cwd(), "skills-test"),
+    lang = "en",
     onEvent,
   } = params;
 
   const log = (msg: string) => onEvent({ type: "log", data: msg });
+  const m = (key: string, vars?: Record<string, string | number>) => dm(lang, key, vars);
 
   try {
     // ── Stage 0: Skill-first matching (before Knowledge analysis) ─────────
-    log("🧩 优先匹配可复用 Skills...");
+    log(m("skill_matching"));
     const skillMatch = findBestSkill(task, skillsDir);
     if (skillMatch) {
-      log(`✓ 命中 Skill：${skillMatch.name}`);
+      log(m("skill_matched", { name: skillMatch.name }));
       const report: AnalysisReport = {
         task,
         domain: "skill",
@@ -144,14 +148,14 @@ export async function analyzeDependencies(params: {
         },
       };
       onEvent({ type: "report", data: report });
-      log("✅ 已走 Skill 快速路径");
+      log(m("skill_fast_path"));
       return report;
     }
-    log("ℹ️ 未命中 Skill，回退到 Knowledge 依赖分析");
+    log(m("skill_miss"));
 
     // ── Stage 1: Domain detection ──────────────────────────────────────
 
-    log("🔍 检测任务类型...");
+    log(m("detecting_task"));
     const detectRaw = await aiCall({
       system: DETECT_SYSTEM,
       messages: [{ role: "user", content: buildDetectMessage(task) }],
@@ -164,7 +168,7 @@ export async function analyzeDependencies(params: {
     };
 
     if (!detect.is_domain_specific) {
-      log("ℹ️ 普通任务，无需领域依赖分析");
+      log(m("general_task"));
       const report: AnalysisReport = {
         task, domain: "", isDomainSpecific: false,
         dependencies: [], foundFiles: [], missingDeps: [],
@@ -175,22 +179,26 @@ export async function analyzeDependencies(params: {
       return report;
     }
 
-    log(`✓ 领域识别：${detect.domain}（${detect.reason}）`);
+    log(m("domain_detected", { domain: detect.domain, reason: detect.reason }));
 
     // Preload files once for both decomposition hints and matching.
-    log("📂 加载 Decision Vault 文件列表...");
+    log(m("loading_vault"));
     const allFiles = loadVaultFiles({ vaultPath, platformDir });
-    log(`✓ 共找到 ${allFiles.length} 个文件（Platform: ${allFiles.filter(f => f.source === "platform").length}，Private: ${allFiles.filter(f => f.source === "private").length}）`);
+    log(m("vault_loaded", {
+      total: allFiles.length,
+      platform: allFiles.filter(f => f.source === "platform").length,
+      private: allFiles.filter(f => f.source === "private").length,
+    }));
 
     // ── Stage 2: Decompose dependencies ───────────────────────────────
 
-    log("📋 分析所需知识依赖...");
+    log(m("decomposing"));
     const normalizedTask = normalizeTask(task);
     const memoryHit = findSimilarMemory(normalizedTask, detect.domain);
     let deps: { name: string; description: string; level: "critical" | "helpful" }[] = [];
     if (memoryHit) {
       deps = memoryHit.deps;
-      log(`♻️ 复用相似任务依赖模板（相似度 ${Math.round(memoryHit.similarity * 100)}%）`);
+      log(m("reusing_memory", { pct: Math.round(memoryHit.similarity * 100) }));
     } else {
       const decomposeRaw = await aiCall({
         system: DECOMPOSE_SYSTEM,
@@ -211,7 +219,7 @@ export async function analyzeDependencies(params: {
         .slice(0, 6)
         .map(f => `- ${f.name}: ${f.content.replace(/\n+/g, " ").slice(0, 100)}`)
         .join("\n");
-      log("⚠️ 首轮未拆解出依赖，尝试基于高相关文件再次识别...");
+      log(m("decompose_retry"));
       const retryRaw = await aiCall({
         system: DECOMPOSE_SYSTEM,
         messages: [{
@@ -243,22 +251,22 @@ ${hints}
     }
 
     if (deps.length === 0) {
-      log("⚠️ 未能识别出具体知识依赖项，将直接对所有可用文件评估相关性");
+      log(m("decompose_empty"));
     } else {
-      log(`✓ 识别到 ${deps.length} 个知识依赖项`);
+      log(m("deps_found", { count: deps.length }));
       deps.forEach(d => log(`  ${d.level === "critical" ? "🔴" : "🟡"} ${d.name}`));
     }
 
     // ── Stage 3: Match deps to files ──────────────────────────────────
 
     if (allFiles.length === 0) {
-      log("⚠️ Vault 为空，无可用依赖");
+      log(m("vault_empty"));
       const report = buildEmptyReport(task, detect.domain, deps);
       onEvent({ type: "report", data: report });
       return report;
     }
 
-    log("🔗 匹配依赖与文件...");
+    log(m("matching_files"));
     const availableFiles = allFiles.map(f => ({
       name: f.name,
       source: f.source,
@@ -285,7 +293,7 @@ ${hints}
     };
     let matches = stabilizeMatches(matchResult.matches ?? [], effectiveDeps as any, allFiles);
     if (matches.length === 0 && effectiveDeps.length > 0) {
-      log("⚠️ LLM 匹配结果为空，启用本地检索兜底...");
+      log(m("match_fallback"));
       matches = effectiveDeps.map((dep: any) => {
         const query = `${dep.name} ${dep.description ?? ""}`.trim();
         const ctx = retrieveContext({ query, allFiles, topK: 2 });
@@ -306,22 +314,22 @@ ${hints}
     const missingDeps: string[] = [];
     const resultDeps: AnalysisDependency[] = [];
 
-    for (const m of matches) {
-      const coverage = (m.coverage ?? "none") as "full" | "partial" | "none";
-      const coveredBy = m.covered_by ?? [];
+    for (const mt of matches) {
+      const coverage = (mt.coverage ?? "none") as "full" | "partial" | "none";
+      const coveredBy = mt.covered_by ?? [];
 
       if (coverage !== "none") {
         coveredBy.forEach(f => foundFileNames.add(f));
-        log(`  ✅ ${m.dependency} → ${coveredBy.join(", ")}`);
+        log(m("dep_covered", { dep: mt.dependency, files: coveredBy.join(", ") }));
       } else {
-        missingDeps.push(m.dependency);
-        log(`  ❌ ${m.dependency} → 未找到匹配文件`);
+        missingDeps.push(mt.dependency);
+        log(m("dep_missing", { dep: mt.dependency }));
       }
 
       resultDeps.push({
-        name: m.dependency,
-        description: deps.find(d => d.name === m.dependency)?.description ?? "",
-        level: (m.level ?? "helpful") as "critical" | "helpful",
+        name: mt.dependency,
+        description: deps.find(d => d.name === mt.dependency)?.description ?? "",
+        level: (mt.level ?? "helpful") as "critical" | "helpful",
         coverage,
         coveredBy,
       });
@@ -329,16 +337,16 @@ ${hints}
 
     const evidenceQuality = estimateEvidenceQuality(matches as any, availableFiles as any);
     const noiseRatio = estimateNoiseRatio(matches as any);
-    const multiHop = estimateMultiHopReasoning(effectiveDeps as any, matches as any, allFiles as any);
+    const multiHop = estimateMultiHopReasoning(effectiveDeps as any, matches as any, allFiles as any, lang);
     const boostedEvidenceQuality = clamp01(0.75 * evidenceQuality + 0.25 * multiHop.score);
     const rawConfidence = computeConfidence(matches as any, { evidenceQuality: boostedEvidenceQuality, noiseRatio });
     const confidence = applyCalibration(rawConfidence);
     const level = confidenceLevel(confidence);
-    log(`🔀 多跳依赖链完整度：${Math.round(multiHop.score * 100)}%`);
+    log(m("multihop_score", { pct: Math.round(multiHop.score * 100) }));
     if (multiHop.brokenCriticalChains.length > 0) {
-      log(`⚠️ 关键链路断点：${multiHop.brokenCriticalChains.join("；")}`);
+      log(m("broken_chains", { chains: multiHop.brokenCriticalChains.join(lang === "zh" ? "；" : "; ") }));
     }
-    log(`\n📊 执行可信度等级：${levelLabel(level)}`);
+    log(m("confidence_label", { level: levelLabel(level, lang) }));
 
     // Emit highlight event for Brain Graph
     const highlightNodes: { id: string; status: "found" | "missing" }[] = [];
@@ -359,7 +367,7 @@ ${hints}
 
     // Emit ghost nodes for missing deps — generate templates in parallel
     if (missingDeps.length > 0) {
-      log(`📝 生成缺失知识模板...`);
+      log(m("generating_templates"));
       const templateEntries = await Promise.all(
         missingDeps.map(async (name) => {
           try {
@@ -377,16 +385,16 @@ ${hints}
         })
       );
       onEvent({ type: "ghost", data: { nodes: templateEntries } });
-      log(`📍 在 Brain Graph 中标记 ${missingDeps.length} 个缺失节点（点击可创建）`);
+      log(m("ghost_marked", { count: missingDeps.length }));
     }
 
     // Build context files for enriched prompt
-    log("\n📖 读取匹配文件内容...");
+    log(m("reading_files"));
     const contextFiles: { name: string; source: string; content: string }[] = [];
     for (const name of foundFileNames) {
       const file = allFiles.find(f => f.name === name);
       if (!file) continue;
-      log(`  📄 读取：${name}.md`);
+      log(m("reading_file", { name }));
       contextFiles.push({ name: file.name, source: file.source, content: file.content });
     }
 
@@ -416,14 +424,14 @@ ${hints}
       deps: effectiveDeps as any,
       ts: Date.now(),
     });
-    log("\n✅ 分析完成");
+    log(m("analysis_complete"));
     return report;
 
   } catch (err: any) {
     const rawMsg: string = err?.message ?? String(err);
     const msg = rawMsg.includes("ANTHROPIC_API_KEY")
-      ? "未配置 ANTHROPIC_API_KEY，请在项目根目录创建 .env 文件并填写 API Key"
-      : `分析出错：${rawMsg}`;
+      ? m("error_no_api_key")
+      : m("error_analysis", { msg: rawMsg });
     log(`❌ ${msg}`);
     onEvent({ type: "error", data: msg });
     throw err;
@@ -456,8 +464,8 @@ function normalizeDependencies(input: unknown): { name: string; description: str
     .filter(d => d.name.length > 0);
 }
 
-function levelLabel(level: "high" | "medium" | "low"): string {
-  return { high: "高", medium: "中", low: "低" }[level];
+function levelLabel(level: "high" | "medium" | "low", lang: Lang = "en"): string {
+  return dm(lang, `level_${level}`);
 }
 
 function buildEmptyReport(
@@ -534,13 +542,14 @@ function tokenizeLite(text: string): Set<string> {
 function estimateMultiHopReasoning(
   deps: { name: string; level: "critical" | "helpful" }[],
   matches: { dependency: string; level: string; covered_by?: string[]; coverage?: string }[],
-  allFiles: { name: string; content: string }[]
+  allFiles: { name: string; content: string }[],
+  lang: Lang = "en"
 ): { score: number; brokenCriticalChains: string[] } {
   const criticalDeps = deps.filter(d => d.level === "critical");
   if (criticalDeps.length <= 1) return { score: 1, brokenCriticalChains: [] };
 
   const adjacency = buildFileAdjacency(allFiles);
-  const matchByDep = new Map(matches.map(m => [m.dependency, m]));
+  const matchByDep = new Map(matches.map(mt => [mt.dependency, mt]));
 
   let connectedPairs = 0;
   let totalPairs = 0;
@@ -553,13 +562,13 @@ function estimateMultiHopReasoning(
     const aFile = matchByDep.get(a.name)?.covered_by?.[0];
     const bFile = matchByDep.get(b.name)?.covered_by?.[0];
     if (!aFile || !bFile) {
-      broken.push(`${a.name} -> ${b.name}（缺少证据文件）`);
+      broken.push(dm(lang, "chain_no_evidence", { a: a.name, b: b.name }));
       continue;
     }
     if (withinHops(aFile, bFile, adjacency, 2)) {
       connectedPairs++;
     } else {
-      broken.push(`${a.name} -> ${b.name}（链路断开）`);
+      broken.push(dm(lang, "chain_disconnected", { a: a.name, b: b.name }));
     }
   }
 

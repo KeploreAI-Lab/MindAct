@@ -63,6 +63,10 @@ const messages = {
     graph_toolbar_full: "Brain - scroll to zoom, drag nodes, click to open",
     fullscreen: "Fullscreen",
     exit_fullscreen: "Exit fullscreen",
+    terminal_run_hint: "Run in terminal:",
+    copy: "Copy",
+    upload_file: "Upload file or image",
+    apply_created_skill_prompt: "Please prioritize the newly created skill file for this task.\nSkill file: {path}\n\nTask: {task}",
   },
   zh: {
     app_title: "MindAct",
@@ -126,11 +130,17 @@ const messages = {
     graph_toolbar_full: "脑图 - 滚轮缩放，拖动节点，点击打开",
     fullscreen: "全屏",
     exit_fullscreen: "退出全屏",
+    terminal_run_hint: "💡 在终端里执行：",
+    copy: "复制",
+    upload_file: "上传文件或图片",
+    apply_created_skill_prompt: "请优先应用刚创建的技能文件执行任务。\n技能文件：{path}\n\n任务：{task}",
   },
 } as const;
 
 export type MessageKey = keyof typeof messages.en;
 
-export function t(lang: UiLanguage, key: MessageKey): string {
-  return messages[lang][key] ?? messages.en[key];
+export function t(lang: UiLanguage, key: MessageKey, vars?: Record<string, string | number>): string {
+  const template = messages[lang][key] ?? messages.en[key];
+  if (!vars) return template;
+  return template.replace(/\{(\w+)\}/g, (_, k) => String(vars[k] ?? `{${k}}`));
 }
