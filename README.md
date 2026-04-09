@@ -198,8 +198,12 @@ mindact/
 ### Installation
 
 ```bash
-git clone https://github.com/your-username/mindact
-cd mindact
+# Install Bun (macOS, Linux, WSL)
+curl -fsSL https://bun.sh/install | bash
+
+# Clone and install dependencies
+git clone https://github.com/KeploreAI-Lab/MindAct
+cd MindAct
 bun install
 cd client && bun install && cd ..
 ```
