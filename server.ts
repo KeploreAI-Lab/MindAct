@@ -720,7 +720,7 @@ const server = serve({
 
     // ── Dependency Analysis (SSE streaming) ─────────────────────────────────
     if (url.pathname === "/api/dm/analyze" && req.method === "POST") {
-      const { task } = await req.json() as { task: string };
+      const { task, lang } = await req.json() as { task: string; lang?: string };
       const cfg = readConfig();
       const vaultPath = cfg?.vault_path || "";
 
@@ -735,6 +735,7 @@ const server = serve({
               task,
               vaultPath,
               skillsDir: cfg?.skills_path || defaultSkillsRoot(),
+              lang: (lang === "zh" || lang === "en") ? lang : "en",
               onEvent: (event) => send(event),
             });
           } catch (err: any) {

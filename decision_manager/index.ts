@@ -17,3 +17,7 @@ export { suggestLinks, summarizeFile, findMissingDeps } from "./tasks/graph_anal
 // AI client (for custom tasks)
 export { aiCall, aiStream, DEFAULT_MODEL } from "./ai_client";
 export type { ChatMessage, AiCallOptions, StreamCallOptions } from "./ai_client";
+
+// i18n
+export { dm } from "./i18n";
+export type { Lang } from "./i18n";
