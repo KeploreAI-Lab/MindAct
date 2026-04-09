@@ -7,15 +7,25 @@ import { t } from "../i18n";
 export default function SkillsExplorer() {
   const { config, uiLanguage } = useStore();
   const [skillsTree, setSkillsTree] = useState<TreeNode[]>([]);
+  const [loadedPath, setLoadedPath] = useState<string>(config?.skills_path ?? "");
+  const [pathInput, setPathInput] = useState<string>(config?.skills_path ?? "");
   const [openFilePath, setOpenFilePath] = useState<string | null>(null);
   const [openFileContent, setOpenFileContent] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
+  const [loading, setLoading] = useState(false);
 
   const loadSkills = useCallback((path: string) => {
-    if (!path) return;
-    fetch(`/api/skills/tree?path=${encodeURIComponent(path)}`)
+    if (!path.trim()) return;
+    setLoading(true);
+    fetch(`/api/skills/tree?path=${encodeURIComponent(path.trim())}`)
       .then(r => r.json())
-      .then(data => { if (Array.isArray(data)) setSkillsTree(data); });
+      .then(data => {
+        if (Array.isArray(data)) {
+          setSkillsTree(data);
+          setLoadedPath(path.trim());
+        }
+      })
+      .finally(() => setLoading(false));
   }, []);
 
   const openFile = useCallback((node: TreeNode) => {
@@ -34,24 +44,60 @@ export default function SkillsExplorer() {
     });
   }, [openFilePath]);
 
+  // Auto-load on mount if config has skills_path
   React.useEffect(() => {
-    if (config?.skills_path) loadSkills(config.skills_path);
+    if (config?.skills_path) {
+      setPathInput(config.skills_path);
+      loadSkills(config.skills_path);
+    }
   }, [config?.skills_path, loadSkills]);
+
+  const uiLoad = uiLanguage === "zh" ? "加载" : "Load";
+  const uiPlaceholder = uiLanguage === "zh" ? "输入技能文件夹路径..." : "Enter skills folder path...";
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
-      <div style={{ padding: "10px 10px 0", flexShrink: 0 }}>
-        <div style={{ fontSize: 10, color: "#666", marginBottom: 4, textTransform: "uppercase", letterSpacing: 0.5 }}>
-          {t(uiLanguage, "skills_path")}
+      {/* Folder load bar */}
+      <div style={{ padding: "10px 10px 8px", flexShrink: 0, borderBottom: "1px solid #333" }}>
+        <div style={{ fontSize: 10, color: "#666", marginBottom: 6, textTransform: "uppercase", letterSpacing: 0.5 }}>
+          {uiLanguage === "zh" ? "专家能力文件夹" : "Skills Folder"}
         </div>
-        <input
-          value={config?.skills_path ?? ""}
-          readOnly
-          style={inputStyle}
-        />
+        <div style={{ display: "flex", gap: 6 }}>
+          <input
+            value={pathInput}
+            onChange={e => setPathInput(e.target.value)}
+            onKeyDown={e => { if (e.key === "Enter") loadSkills(pathInput); }}
+            placeholder={uiPlaceholder}
+            style={{ ...inputStyle, flex: 1 }}
+          />
+          <button
+            onClick={() => loadSkills(pathInput)}
+            disabled={loading}
+            style={{
+              padding: "5px 12px",
+              background: "#007acc",
+              border: "none",
+              borderRadius: 4,
+              color: "#fff",
+              fontSize: 12,
+              fontWeight: 600,
+              cursor: loading ? "not-allowed" : "pointer",
+              opacity: loading ? 0.6 : 1,
+              flexShrink: 0,
+            }}
+          >
+            {loading ? "..." : uiLoad}
+          </button>
+        </div>
+        {loadedPath && (
+          <div style={{ fontSize: 10, color: "#555", marginTop: 4, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            {loadedPath}
+          </div>
+        )}
       </div>
 
-      <div style={{ padding: "8px 10px", display: "flex", gap: 6, flexShrink: 0, borderBottom: "1px solid #333", marginTop: 8 }}>
+      {/* Search */}
+      <div style={{ padding: "8px 10px", display: "flex", gap: 6, flexShrink: 0, borderBottom: "1px solid #333" }}>
         <span style={{ color: "#555", fontSize: 14, lineHeight: "28px" }}>🔍</span>
         <input
           value={searchQuery}
@@ -61,10 +107,13 @@ export default function SkillsExplorer() {
         />
       </div>
 
+      {/* File tree */}
       <div style={{ flex: openFilePath ? "0 0 40%" : "1", overflow: "auto" }}>
-        {!config?.skills_path ? (
-          <div style={{ color: "#555", padding: "20px 16px", fontSize: 12 }}>{t(uiLanguage, "skills_not_configured")}</div>
-        ) : skillsTree.length === 0 ? (
+        {!loadedPath ? (
+          <div style={{ color: "#555", padding: "20px 16px", fontSize: 12 }}>
+            {uiLanguage === "zh" ? "请输入文件夹路径并点击「加载」。" : "Enter a folder path above and click Load."}
+          </div>
+        ) : skillsTree.length === 0 && !loading ? (
           <div style={{ color: "#555", padding: 16, fontSize: 12 }}>{t(uiLanguage, "no_files_found_skills")}</div>
         ) : (
           <FileTree nodes={skillsTree} onFileClick={openFile} activeFile={openFilePath} filterQuery={searchQuery} />

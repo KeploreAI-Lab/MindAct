@@ -66,9 +66,9 @@ const messages = {
   },
   zh: {
     app_title: "MindAct",
-    tab_dependency: "决策依赖",
-    tab_skills: "技能",
-    tab_project: "项目",
+    tab_dependency: "决策依据",
+    tab_skills: "专家能力",
+    tab_project: "项目文件",
     settings: "设置",
     history: "历史",
     language: "语言",

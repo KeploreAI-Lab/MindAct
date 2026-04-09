@@ -11,6 +11,7 @@
 [![Obsidian](https://img.shields.io/badge/Obsidian-Compatible-7c3aed?style=flat-square&logo=obsidian&logoColor=white)](https://obsidian.md)
 [![RAG](https://img.shields.io/badge/RAG-Knowledge_Retrieval-f59e0b?style=flat-square)](https://github.com/KeploreAI-Lab/MindAct)
 [![Knowledge Graph](https://img.shields.io/badge/Knowledge_Graph-D3.js-8b5cf6?style=flat-square)](https://github.com/KeploreAI-Lab/MindAct)
+[![CLI](https://img.shields.io/badge/CLI-Rust-orange?style=flat-square&logo=rust&logoColor=white)](https://github.com/KeploreAI-Lab/physmind-cli-rust)
 [![License](https://img.shields.io/badge/License-AGPL--3.0-green?style=flat-square)](./LICENSE)
 
 [![Discord](https://img.shields.io/badge/Discord-Join-5865F2?style=flat-square&logo=discord&logoColor=white)](https://discord.gg/hpq9t4QQ)
@@ -155,6 +156,7 @@ The design draws from [CRAG](https://arxiv.org/abs/2401.15884)'s evaluator-based
 | Knowledge graph | D3.js force-directed (Obsidian-style `[[links]]`) |
 | Code editor | CodeMirror 6 |
 | AI | Anthropic Claude API (`claude-sonnet-4-6` / `claude-haiku-4-5`) |
+| CLI | Rust ([physmind-cli-rust](https://github.com/KeploreAI-Lab/physmind-cli-rust)) |
 
 ---
 
@@ -162,13 +164,19 @@ The design draws from [CRAG](https://arxiv.org/abs/2401.15884)'s evaluator-based
 
 ```
 mindact/
+├── cli/                       # physmind CLI (git submodule → physmind-cli-rust)
+│   └── rust/                  # Rust workspace — cargo build --release
+├── setup.sh                   # One-shot setup: build CLI + install deps
+├── restart.sh                 # Dev launcher: build client + start server + Electron
 ├── server.ts                  # Bun HTTP server (REST + SSE + WebSocket)
 ├── electron-main.cjs          # Electron main process
 ├── client/                    # React + Vite frontend
 │   └── src/
 │       ├── components/
 │       │   ├── Terminal.tsx        # Claude Code terminal + analysis input
-│       │   ├── KBPanel.tsx         # Knowledge base panel
+│       │   ├── KBPanel.tsx         # Knowledge base panel (决策依据)
+│       │   ├── SkillsExplorer.tsx  # Skills panel (专家能力) — folder load UI
+│       │   ├── FileExplorer.tsx    # Project files panel (项目文件)
 │       │   ├── Graph.tsx           # Brain Graph (d3)
 │       │   ├── GraphLogDrawer.tsx  # Analysis log overlay
 │       │   └── DependencyReport.tsx
@@ -191,45 +199,47 @@ mindact/
 
 - [Bun](https://bun.sh) ≥ 1.0
 - [Node.js](https://nodejs.org) ≥ 18 (for node-pty)
+- [Rust + Cargo](https://rustup.rs) (to build the CLI)
 - [Electron](https://electronjs.org)
-- [Claude Code CLI](https://docs.anthropic.com/claude-code) — `npm install -g @anthropic-ai/claude-code`
 - An [Anthropic API key](https://console.anthropic.com)
 
 ### Installation
 
 ```bash
-# Install Bun (macOS, Linux, WSL)
-curl -fsSL https://bun.sh/install | bash
-
-# Clone and install dependencies
-git clone https://github.com/KeploreAI-Lab/MindAct
+# Clone with submodules (includes physmind-cli-rust)
+git clone --recurse-submodules https://github.com/KeploreAI-Lab/MindAct
 cd MindAct
-bun install
-cd client && bun install && cd ..
+
+# One-shot setup: build CLI binary + install app dependencies
+./setup.sh
 ```
+
+`setup.sh` will:
+1. Pull the `cli/` submodule
+2. `cargo build --release` the Rust CLI and link `physmind` to `/usr/local/bin`
+3. `bun install` all app dependencies
 
 ### Configuration
 
 ```bash
 cp .env.example .env
-# Add your Anthropic API key to .env
+# Add your ANTHROPIC_API_KEY to .env
 ```
 
 ### Run
 
 ```bash
-# Start everything (server + Vite dev + Electron)
+# Start everything (build client + server + Electron)
 ./restart.sh
 
-# Or: server + frontend only (no Electron, opens in browser)
+# Or: server + frontend only (browser at http://localhost:5173)
 bun run dev
-# Then open http://localhost:5173
 ```
 
-On first launch, MindAct will ask you to configure:
+On startup, open **Settings** in the top bar to configure:
 - **Vault path** — folder where your private knowledge base markdown files live
 - **Project path** — your working project directory (opened in the Claude Code terminal)
-- **Skills path** — root directory where reusable skills are stored (e.g. `skills-test`)
+- **Skills path** — root directory for reusable skills (can also be set per-session in the 专家能力 tab)
 
 ---
 

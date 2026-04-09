@@ -5,7 +5,6 @@ import FileExplorer from "./components/FileExplorer";
 import SkillsExplorer from "./components/SkillsExplorer";
 import Terminal from "./components/Terminal";
 import Graph from "./components/Graph";
-import SetupDialog from "./components/SetupDialog";
 import HistoryPanel from "./components/HistoryPanel";
 import BrainInspect from "./components/BrainInspect";
 import { t } from "./i18n";
@@ -117,14 +116,7 @@ export default function App() {
     );
   }
 
-  if (!config) {
-    return <SetupDialog onSave={(c) => {
-      setConfig(c);
-      setConfigLoaded(true);
-      loadVault(c.vault_path);
-      loadProject(c.project_path);
-    }} />;
-  }
+  // Skip forced setup — proceed with whatever config exists (may be partial/null)
 
   const leftWidth = graphMode ? "100%" : `${panelRatio * 100}%`;
   const rightWidth = graphMode ? "0%" : `${(1 - panelRatio) * 100}%`;
