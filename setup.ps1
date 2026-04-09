@@ -30,6 +30,8 @@ if (-not $hasVS) {
     $proc = Start-Process -FilePath $vsBT `
         -ArgumentList "--quiet","--wait","--norestart","--nocache",
                       "--add","Microsoft.VisualStudio.Workload.VCTools",
+                      "--add","Microsoft.VisualStudio.Component.VC.Tools.ARM64",
+                      "--add","Microsoft.VisualStudio.Component.Windows11SDK.22621",
                       "--includeRecommended" `
         -Wait -PassThru
     Write-Host "  Installer exited with code: $($proc.ExitCode)"
@@ -50,13 +52,24 @@ if (-not $hasVS) {
     ok "C++ Build Tools found"
 }
 
-# Load the full MSVC build environment (PATH + LIB + INCLUDE) via vcvars64.bat
+# Load the full MSVC build environment (PATH + LIB + INCLUDE) via the correct vcvars bat
 $vsInstallPath = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath 2>$null
 if ($vsInstallPath) {
-    $vcvars = "$vsInstallPath\VC\Auxiliary\Build\vcvars64.bat"
+    # Pick the right vcvars batch for this machine's architecture
+    $arch = (Get-WmiObject Win32_Processor | Select-Object -First 1).Architecture
+    # 9 = x64, 12 = ARM64
+    if ($arch -eq 12 -or $env:PROCESSOR_ARCHITECTURE -eq "ARM64") {
+        $vcvars = "$vsInstallPath\VC\Auxiliary\Build\vcvarsarm64.bat"
+        Write-Host "  ARM64 machine detected -- using vcvarsarm64.bat"
+    } else {
+        $vcvars = "$vsInstallPath\VC\Auxiliary\Build\vcvars64.bat"
+        Write-Host "  x64 machine detected -- using vcvars64.bat"
+    }
+    if (-not (Test-Path $vcvars)) {
+        # Fallback: try vcvars64.bat
+        $vcvars = "$vsInstallPath\VC\Auxiliary\Build\vcvars64.bat"
+    }
     if (Test-Path $vcvars) {
-        Write-Host "  Loading MSVC environment from vcvars64.bat..."
-        # Run vcvars64.bat and capture all env vars it sets
         $envDump = cmd /c "`"$vcvars`" && set" 2>$null
         foreach ($line in $envDump) {
             if ($line -match "^([^=]+)=(.*)$") {
@@ -64,7 +77,9 @@ if ($vsInstallPath) {
                 [System.Environment]::SetEnvironmentVariable($k, $v, "Process")
             }
         }
-        ok "MSVC environment loaded (link.exe + kernel32.lib + SDK all set)"
+        ok "MSVC environment loaded"
+    } else {
+        die "vcvars bat not found in $vsInstallPath -- ensure C++ workload is installed"
     }
 }
 
