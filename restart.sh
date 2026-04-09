@@ -31,6 +31,7 @@ cd client && "$BUN_CMD" run build 2>&1 | tail -3 && cd ..
 
 # ── Start server ──────────────────────────────────────────────
 echo "🚀  Starting server..."
+export CLAUDE_BIN="${CLAUDE_BIN:-$HOME/claw-code/rust/target/release/claw}"
 "$BUN_CMD" run server.ts > /tmp/mindact-server.log 2>&1 &
 SERVER_PID=$!
 
