@@ -50,6 +50,20 @@ if (-not $hasVS) {
     ok "C++ Build Tools found"
 }
 
+# Add MSVC link.exe to PATH so cargo can find it
+$vsInstallPath = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath 2>$null
+if ($vsInstallPath) {
+    $vcVerFile = "$vsInstallPath\VC\Auxiliary\Build\Microsoft.VCToolsVersion.default.txt"
+    if (Test-Path $vcVerFile) {
+        $vcVer = (Get-Content $vcVerFile).Trim()
+        $linkPath = "$vsInstallPath\VC\Tools\MSVC\$vcVer\bin\Hostx64\x64"
+        if (Test-Path $linkPath) {
+            $env:PATH = "$linkPath;$env:PATH"
+            ok "MSVC linker added to PATH: $linkPath"
+        }
+    }
+}
+
 # -- 2. Rust ------------------------------------------------------
 Write-Host ""
 Write-Host "Checking Rust..."
