@@ -201,7 +201,7 @@ mindact/
 - [Node.js](https://nodejs.org) ≥ 18 (for node-pty)
 - [Rust + Cargo](https://rustup.rs) (to build the CLI)
 - [Electron](https://electronjs.org)
-- An [Anthropic API key](https://console.anthropic.com)
+- A KeploreAI key (`kplr-...`) — enter it in **Settings** after first launch
 
 ### Installation
 
@@ -221,10 +221,7 @@ cd MindAct
 
 ### Configuration
 
-```bash
-cp .env.example .env
-# Add your ANTHROPIC_API_KEY to .env
-```
+Open **Settings** in the top bar and enter your KeploreAI key (`kplr-...`). The key is saved to `~/.config/physmind/credentials` and used for all AI calls.
 
 ### Run
 
@@ -341,7 +338,8 @@ bun test tests/api/          # requires running server
 
 | Variable | Required | Description |
 |---|---|---|
-| `ANTHROPIC_API_KEY` | Yes | Used for dependency analysis pipeline |
+| `KPLR_KEY` | Yes | KeploreAI key (`kplr-...`). Set via Settings UI — saved to `~/.config/physmind/credentials` |
+| `CLAUDE_BIN` | No | Override path to the CLI binary (default: auto-detected from `PATH`) |
 
 ---
 
