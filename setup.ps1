@@ -50,17 +50,21 @@ if (-not $hasVS) {
     ok "C++ Build Tools found"
 }
 
-# Add MSVC link.exe to PATH so cargo can find it
+# Load the full MSVC build environment (PATH + LIB + INCLUDE) via vcvars64.bat
 $vsInstallPath = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath 2>$null
 if ($vsInstallPath) {
-    $vcVerFile = "$vsInstallPath\VC\Auxiliary\Build\Microsoft.VCToolsVersion.default.txt"
-    if (Test-Path $vcVerFile) {
-        $vcVer = (Get-Content $vcVerFile).Trim()
-        $linkPath = "$vsInstallPath\VC\Tools\MSVC\$vcVer\bin\Hostx64\x64"
-        if (Test-Path $linkPath) {
-            $env:PATH = "$linkPath;$env:PATH"
-            ok "MSVC linker added to PATH: $linkPath"
+    $vcvars = "$vsInstallPath\VC\Auxiliary\Build\vcvars64.bat"
+    if (Test-Path $vcvars) {
+        Write-Host "  Loading MSVC environment from vcvars64.bat..."
+        # Run vcvars64.bat and capture all env vars it sets
+        $envDump = cmd /c "`"$vcvars`" && set" 2>$null
+        foreach ($line in $envDump) {
+            if ($line -match "^([^=]+)=(.*)$") {
+                $k = $matches[1]; $v = $matches[2]
+                [System.Environment]::SetEnvironmentVariable($k, $v, "Process")
+            }
         }
+        ok "MSVC environment loaded (link.exe + kernel32.lib + SDK all set)"
     }
 }
 
