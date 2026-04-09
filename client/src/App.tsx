@@ -314,12 +314,19 @@ function SettingsForm({ config, onSave }: { config: import("./store").Config; on
     const c: import("./store").Config = { vault_path: vault, project_path: project, skills_path: skills, panel_ratio: config.panel_ratio, kplr_token: token || undefined };
     const body: Record<string, unknown> = { ...c };
     fetch("/api/config", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) })
-      .then(() => onSave(c));
+      .then(async (res) => {
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({ error: "Save failed" }));
+          alert(err.error || "Save failed");
+          return;
+        }
+        onSave(c);
+      });
   };
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-      <label style={{ color: "#888", fontSize: 11 }}>Vault Path</label>
+      <label style={{ color: "#888", fontSize: 11 }}>Private Decision Dependancy</label>
       <input value={vault} onChange={e => setVault(e.target.value)} style={inputStyle} />
       <label style={{ color: "#888", fontSize: 11 }}>Project Path</label>
       <input value={project} onChange={e => setProject(e.target.value)} style={inputStyle} />

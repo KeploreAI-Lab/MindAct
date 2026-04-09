@@ -152,7 +152,6 @@ function normalizeConfig(raw: any): Config | null {
   const project_path = String(raw.project_path ?? "").trim();
   const skills_path = String(raw.skills_path ?? "").trim();
   const panel_ratio = Number.isFinite(raw.panel_ratio) ? Number(raw.panel_ratio) : 0.45;
-  if (!vault_path || !project_path || !skills_path) return null;
   return { vault_path, project_path, skills_path, panel_ratio };
 }
 
@@ -396,16 +395,12 @@ const server = serve({
       }
       if (req.method === "POST") {
         return req.json().then((body: Config & { kplr_token?: string }) => {
-          const normalized = normalizeConfig(body);
-          if (!normalized) return errorResponse("vault_path, project_path, skills_path are required");
-          writeConfig(normalized);
+          // Save key first, independently of path config validation
           if (body.kplr_token?.startsWith("kplr-")) {
             saveKplrCredentials(body.kplr_token);
-            // Restart all active PTY sessions so they pick up the new key
-            for (const [ws] of ptySessions) {
-              try { ws.send(JSON.stringify({ type: "restart" })); } catch {}
-            }
           }
+          const normalized = normalizeConfig(body);
+          if (normalized) writeConfig(normalized);
           return jsonResponse({ ok: true });
         });
       }
