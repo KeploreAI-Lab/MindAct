@@ -22,24 +22,30 @@ if (Test-Path $vswhere) {
     if ($vsPath) { $hasVS = $true }
 }
 if (-not $hasVS) {
-    warn "Visual Studio C++ Build Tools not found -- attempting auto-install via winget..."
-    if (Get-Command winget -ErrorAction SilentlyContinue) {
-        winget install --id Microsoft.VisualStudio.2022.BuildTools --silent --override "--quiet --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended"
-        # Re-check
-        if (Test-Path $vswhere) {
-            $vsPath = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath 2>$null
-            if ($vsPath) { $hasVS = $true }
-        }
+    warn "C++ workload not found -- installing via vs_buildtools..."
+    $vsBT = "$env:TEMP\vs_buildtools.exe"
+    Write-Host "  Downloading Visual Studio Build Tools installer..."
+    Invoke-WebRequest -Uri "https://aka.ms/vs/17/release/vs_buildtools.exe" -OutFile $vsBT -UseBasicParsing
+    Write-Host "  Installing C++ workload (this may take 5-10 minutes)..."
+    $proc = Start-Process -FilePath $vsBT `
+        -ArgumentList "--quiet","--wait","--norestart","--nocache",
+                      "--add","Microsoft.VisualStudio.Workload.VCTools",
+                      "--includeRecommended" `
+        -Wait -PassThru
+    Write-Host "  Installer exited with code: $($proc.ExitCode)"
+    # Re-check
+    if (Test-Path $vswhere) {
+        $vsPath = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath 2>$null
+        if ($vsPath) { $hasVS = $true }
     }
     if (-not $hasVS) {
         Write-Host ""
-        Write-Host "[ERR] C++ Build Tools are required but could not be installed automatically." -ForegroundColor Red
-        Write-Host "      Please install manually, then re-run setup.ps1:" -ForegroundColor Red
-        Write-Host "      https://visualstudio.microsoft.com/visual-cpp-build-tools/" -ForegroundColor Yellow
-        Write-Host "      (Select 'Desktop development with C++')" -ForegroundColor Yellow
+        Write-Host "[ERR] C++ workload install failed (exit $($proc.ExitCode))." -ForegroundColor Red
+        Write-Host "      Run the installer manually and add the C++ workload:" -ForegroundColor Yellow
+        Write-Host "      $vsBT --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended" -ForegroundColor Yellow
         exit 1
     }
-    ok "C++ Build Tools installed"
+    ok "C++ Build Tools with C++ workload installed"
 } else {
     ok "C++ Build Tools found"
 }
