@@ -1,5 +1,5 @@
 import { serve } from "bun";
-import { existsSync, mkdirSync, readdirSync, statSync, readFileSync, writeFileSync, unlinkSync } from "fs";
+import { existsSync, mkdirSync, readdirSync, statSync, readFileSync, writeFileSync, unlinkSync, rmSync, symlinkSync, lstatSync } from "fs";
 import { join, extname, relative, basename } from "path";
 import { homedir } from "os";
 import { buildIndex, collectMdFiles, parseLinks, BRAIN_INDEX_PATH } from "./decision_manager/build_index";
@@ -171,11 +171,76 @@ function writeConfig(config: Config) {
   writeFileSync(CONFIG_FILE, JSON.stringify(config, null, 2));
 }
 
+function saveKplrCredentials(key: string) {
+  const credDir = join(homedir(), ".config", "physmind");
+  const credFile = join(credDir, "credentials");
+  if (!existsSync(credDir)) mkdirSync(credDir, { recursive: true });
+  writeFileSync(credFile, `KPLR_KEY="${key}"\n`);
+}
+
+function readKplrCredentials(): string | null {
+  const credFile = join(homedir(), ".config", "physmind", "credentials");
+  if (!existsSync(credFile)) return null;
+  try {
+    const lines = readFileSync(credFile, "utf-8").split("\n");
+    for (const line of lines) {
+      const m = line.match(/^KPLR_KEY="?([^"]+)"?/);
+      if (m) return m[1].trim();
+    }
+  } catch {}
+  return null;
+}
+
 interface TreeNode {
   name: string;
   path: string;
   type: "file" | "dir";
   children?: TreeNode[];
+}
+
+// Auto-extract .skill ZIP files in a directory into sibling subdirectories.
+// halcon.skill → halcon/ (only if the dir doesn't already exist or is empty)
+// Then symlink every skill dir into ~/.physmind/skills/ so claw /skills <id> works.
+function extractSkillZips(skillsRoot: string) {
+  const AdmZip = createRequire(import.meta.url)("adm-zip");
+  let entries: string[];
+  try { entries = readdirSync(skillsRoot); } catch { return; }
+
+  for (const name of entries) {
+    if (!name.endsWith(".skill")) continue;
+    const zipPath = join(skillsRoot, name);
+    const destDir = join(skillsRoot, name.replace(/\.skill$/, ""));
+    if (existsSync(destDir) && readdirSync(destDir).length > 0) continue;
+    try {
+      const zip = new AdmZip(zipPath);
+      zip.extractAllTo(skillsRoot, true);
+    } catch {
+      // Corrupt zip — skip
+    }
+  }
+
+  // Symlink all skill dirs into ~/.physmind/skills/ for claw native /skills command
+  syncSkillsToPhysmind(skillsRoot);
+}
+
+function syncSkillsToPhysmind(skillsRoot: string) {
+  const physmindSkills = join(homedir(), ".physmind", "skills");
+  try { mkdirSync(physmindSkills, { recursive: true }); } catch {}
+
+  let entries: ReturnType<typeof readdirSync>;
+  try { entries = readdirSync(skillsRoot, { withFileTypes: true }); } catch { return; }
+
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue;
+    const skillDir = join(skillsRoot, entry.name);
+    if (!existsSync(join(skillDir, "SKILL.md"))) continue;
+    const linkPath = join(physmindSkills, entry.name);
+    // Remove stale link/dir if it points elsewhere
+    if (existsSync(linkPath) || ((() => { try { lstatSync(linkPath); return true; } catch { return false; } })())) {
+      try { rmSync(linkPath, { recursive: true, force: true }); } catch {}
+    }
+    try { symlinkSync(skillDir, linkPath); } catch {}
+  }
 }
 
 function buildTree(dir: string, exts?: string[], depth = 0, maxDepth = 4): TreeNode[] {
@@ -250,7 +315,7 @@ function spawnPty(ws: import("bun").ServerWebSocket<unknown>, projectPath: strin
   try {
     worker = Bun.spawn(["node", PTY_WORKER], {
       cwd,
-      env: { ...process.env, PTY_CWD: cwd },
+      env: { ...process.env as Record<string, string>, PTY_CWD: cwd },
       stdin: "pipe",
       stdout: "pipe",
       stderr: "pipe",
@@ -318,13 +383,17 @@ const server = serve({
     if (url.pathname === "/api/config") {
       if (req.method === "GET") {
         const config = readConfig();
-        return jsonResponse(config);
+        const kplr_token = readKplrCredentials();
+        return jsonResponse(config ? { ...config, kplr_token } : null);
       }
       if (req.method === "POST") {
-        return req.json().then((body: Config) => {
+        return req.json().then((body: Config & { kplr_token?: string }) => {
           const normalized = normalizeConfig(body);
           if (!normalized) return errorResponse("vault_path, project_path, skills_path are required");
           writeConfig(normalized);
+          if (body.kplr_token?.startsWith("kplr-")) {
+            saveKplrCredentials(body.kplr_token);
+          }
           return jsonResponse({ ok: true });
         });
       }
@@ -633,6 +702,7 @@ const server = serve({
     if (url.pathname === "/api/skills/tree") {
       const skillsPath = url.searchParams.get("path") || readConfig()?.skills_path || "";
       if (!skillsPath || !existsSync(skillsPath)) return errorResponse("skills path not found");
+      extractSkillZips(skillsPath);
       const tree = buildTree(skillsPath, undefined, 0, 5);
       return jsonResponse(tree);
     }

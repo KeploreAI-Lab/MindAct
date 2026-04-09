@@ -513,6 +513,11 @@ function Terminal() {
         <DependencyReport
           report={analysisReport}
           onExecute={(enrichedPrompt) => {
+            if (analysisReport?.matchedSkill) {
+              const { name, score } = analysisReport.matchedSkill;
+              const pct = Math.round(score * 100);
+              termRef.current?.write(`\r\n\x1b[36m[MindAct] ✓ Skill loaded: ${name} (${pct}%)\x1b[0m\r\n`);
+            }
             submitInput(enrichedPrompt);
             setAnalysisReport(null);
             setCreatedSkillPathForReport(null);
@@ -639,7 +644,7 @@ function Terminal() {
               onCompositionStart={() => { composingRef.current = true; }}
               onCompositionEnd={() => { composingRef.current = false; }}
               onPaste={handlePaste}
-              placeholder={analysisMode ? "Enter task — dependencies will be analyzed automatically…" : "Message Claude…"}
+              placeholder={analysisMode ? "Enter task — dependencies will be analyzed automatically…" : "Message PhysMind…"}
               autoFocus
               rows={1}
               style={{
