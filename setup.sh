@@ -26,7 +26,15 @@ ok "Submodule ready"
 echo ""
 echo "🦀 Building physmind CLI (Rust)..."
 if ! command -v cargo &>/dev/null; then
-  die "cargo not found. Install Rust: https://rustup.rs"
+  warn "cargo not found — installing Rust via rustup..."
+  curl -fsSL https://sh.rustup.rs | sh -s -- -y --no-modify-path
+  # Source cargo env for the rest of this script
+  # shellcheck source=/dev/null
+  source "$HOME/.cargo/env" 2>/dev/null || export PATH="$HOME/.cargo/bin:$PATH"
+  if ! command -v cargo &>/dev/null; then
+    die "Rust install failed. Please install manually: https://rustup.rs"
+  fi
+  ok "Rust installed ($(cargo --version))"
 fi
 
 cd cli/rust
@@ -51,15 +59,18 @@ fi
 # ── 3. Install app dependencies (Bun) ────────────────────────
 echo ""
 echo "📦 Installing app dependencies..."
-if command -v bun &>/dev/null; then
-  bun install
-  ok "Dependencies installed (Bun)"
-elif command -v npm &>/dev/null; then
-  npm install
-  ok "Dependencies installed (npm)"
-else
-  die "Neither bun nor npm found."
+if ! command -v bun &>/dev/null; then
+  warn "bun not found — installing Bun..."
+  curl -fsSL https://bun.sh/install | bash
+  export BUN_INSTALL="${BUN_INSTALL:-$HOME/.bun}"
+  export PATH="$BUN_INSTALL/bin:$PATH"
+  if ! command -v bun &>/dev/null; then
+    die "Bun install failed. Please install manually: https://bun.sh"
+  fi
+  ok "Bun installed ($(bun --version))"
 fi
+bun install
+ok "Dependencies installed (Bun)"
 
 # ── 4. Done ───────────────────────────────────────────────────
 echo ""
