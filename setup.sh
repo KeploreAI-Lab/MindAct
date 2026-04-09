@@ -53,33 +53,22 @@ bun run build
 cd ..
 ok "Client built -> client/dist/"
 
-# ── 5. Claude CLI check ───────────────────────────────────────
+# ── 5. Build CLI (Rust) ───────────────────────────────────────
 echo ""
-echo "🔍  Checking for Claude CLI..."
-CLAUDE_FOUND=""
-for candidate in \
-    "${CLAUDE_BIN:-}" \
-    "$HOME/claw-code/rust/target/release/claw" \
-    "$HOME/.local/bin/claude" \
-    "$HOME/.npm-global/bin/claude" \
-    "/usr/local/bin/claude" \
-    "/opt/homebrew/bin/claude" \
-    "$(command -v claude 2>/dev/null || true)"; do
-  if [ -n "$candidate" ] && [ -x "$candidate" ]; then
-    CLAUDE_FOUND="$candidate"
-    break
-  fi
-done
-
-if [ -n "$CLAUDE_FOUND" ]; then
-  ok "CLI found: $CLAUDE_FOUND"
-else
-  warn "Claude CLI not found. Install it with:"
-  echo "      npm install -g @anthropic-ai/claude-code"
-  echo ""
-  echo "  MindAct will still launch — enter your kplr-... key in Settings"
-  echo "  and the CLI will be detected automatically once installed."
+echo "🦀  Building CLI..."
+if ! command -v cargo &>/dev/null; then
+  warn "Rust not found — installing via rustup..."
+  curl -fsSL https://sh.rustup.rs | sh -s -- -y --no-modify-path
+  source "$HOME/.cargo/env" 2>/dev/null || export PATH="$HOME/.cargo/bin:$PATH"
+  command -v cargo &>/dev/null || die "Rust install failed. Visit https://rustup.rs"
+  ok "Rust installed ($(cargo --version))"
 fi
+cd cli/rust
+cargo build --release 2>&1 | tail -3
+CLI_BIN="$(pwd)/target/release/claw"
+[ -f "$CLI_BIN" ] || die "CLI build failed — binary not found at $CLI_BIN"
+cd ../..
+ok "CLI built: $CLI_BIN"
 
 # ── Done ──────────────────────────────────────────────────────
 echo ""
