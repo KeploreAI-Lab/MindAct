@@ -134,7 +134,8 @@ export default function BrainInspect({ onClose }: Props) {
     setLoadingUrl(true);
     setUrlMsg("");
 
-    const isLocal = val.startsWith("/") || val.startsWith("~") || val.startsWith(".");
+    const isLocal = val.startsWith("/") || val.startsWith("~") || val.startsWith(".") ||
+      /^[A-Za-z]:[\\\/]/.test(val); // Windows absolute path e.g. C:\...
     const endpoint = isLocal ? "/api/platform/load-local" : "/api/platform/load-url";
     const body = isLocal ? { path: val } : { url: val };
 
