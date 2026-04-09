@@ -4,11 +4,22 @@ import FileTree from "./FileTree";
 import Editor from "./Editor";
 import { t } from "../i18n";
 
+async function pickDir(): Promise<string | null> {
+  const api = (window as any).electronAPI;
+  if (api?.pickFolder) {
+    const result = await api.pickFolder();
+    if (!result.canceled && result.filePaths?.length) return result.filePaths[0];
+    return null;
+  }
+  const res = await fetch("/api/pick-dir");
+  const data = await res.json();
+  return data.path ?? null;
+}
+
 export default function SkillsExplorer() {
-  const { config, uiLanguage } = useStore();
+  const { config, setConfig, uiLanguage } = useStore();
   const [skillsTree, setSkillsTree] = useState<TreeNode[]>([]);
   const [loadedPath, setLoadedPath] = useState<string>(config?.skills_path ?? "");
-  const [pathInput, setPathInput] = useState<string>(config?.skills_path ?? "");
   const [openFilePath, setOpenFilePath] = useState<string | null>(null);
   const [openFileContent, setOpenFileContent] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
@@ -27,6 +38,16 @@ export default function SkillsExplorer() {
       })
       .finally(() => setLoading(false));
   }, []);
+
+  const handleBrowse = useCallback(async () => {
+    const picked = await pickDir();
+    if (!picked) return;
+    // Save to config
+    const newConfig = { ...(config ?? { vault_path: "", project_path: "", skills_path: "", panel_ratio: 0.45 }), skills_path: picked };
+    fetch("/api/config", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(newConfig) });
+    setConfig(newConfig);
+    loadSkills(picked);
+  }, [config, setConfig, loadSkills]);
 
   const openFile = useCallback((node: TreeNode) => {
     if (node.type !== "file") return;
@@ -47,46 +68,24 @@ export default function SkillsExplorer() {
   // Auto-load on mount if config has skills_path
   React.useEffect(() => {
     if (config?.skills_path) {
-      setPathInput(config.skills_path);
       loadSkills(config.skills_path);
     }
   }, [config?.skills_path, loadSkills]);
 
-  const uiLoad = uiLanguage === "zh" ? "加载" : "Load";
-  const uiPlaceholder = uiLanguage === "zh" ? "输入技能文件夹路径..." : "Enter skills folder path...";
-
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
-      {/* Folder load bar */}
+      {/* Folder header */}
       <div style={{ padding: "10px 10px 8px", flexShrink: 0, borderBottom: "1px solid #333" }}>
-        <div style={{ fontSize: 10, color: "#666", marginBottom: 6, textTransform: "uppercase", letterSpacing: 0.5 }}>
-          {uiLanguage === "zh" ? "专家能力文件夹" : "Skills Folder"}
-        </div>
-        <div style={{ display: "flex", gap: 6 }}>
-          <input
-            value={pathInput}
-            onChange={e => setPathInput(e.target.value)}
-            onKeyDown={e => { if (e.key === "Enter") loadSkills(pathInput); }}
-            placeholder={uiPlaceholder}
-            style={{ ...inputStyle, flex: 1 }}
-          />
+        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          <span style={{ fontSize: 10, color: "#666", textTransform: "uppercase", letterSpacing: 0.5, flex: 1 }}>
+            {uiLanguage === "zh" ? "专家能力文件夹" : "Skills Folder"}
+          </span>
           <button
-            onClick={() => loadSkills(pathInput)}
-            disabled={loading}
-            style={{
-              padding: "5px 12px",
-              background: "#007acc",
-              border: "none",
-              borderRadius: 4,
-              color: "#fff",
-              fontSize: 12,
-              fontWeight: 600,
-              cursor: loading ? "not-allowed" : "pointer",
-              opacity: loading ? 0.6 : 1,
-              flexShrink: 0,
-            }}
+            onClick={handleBrowse}
+            title={uiLanguage === "zh" ? "选择文件夹" : "Choose folder"}
+            style={browseBtnStyle}
           >
-            {loading ? "..." : uiLoad}
+            📁
           </button>
         </div>
         {loadedPath && (
@@ -103,7 +102,7 @@ export default function SkillsExplorer() {
           value={searchQuery}
           onChange={e => setSearchQuery(e.target.value)}
           placeholder={t(uiLanguage, "search_skills_files")}
-          style={{ ...inputStyle, flex: 1 }}
+          style={{ background: "#2a2a2a", border: "1px solid #444", borderRadius: 4, color: "#d4d4d4", padding: "5px 8px", fontSize: 12, outline: "none", flex: 1 }}
         />
       </div>
 
@@ -111,7 +110,7 @@ export default function SkillsExplorer() {
       <div style={{ flex: openFilePath ? "0 0 40%" : "1", overflow: "auto" }}>
         {!loadedPath ? (
           <div style={{ color: "#555", padding: "20px 16px", fontSize: 12 }}>
-            {uiLanguage === "zh" ? "请输入文件夹路径并点击「加载」。" : "Enter a folder path above and click Load."}
+            {uiLanguage === "zh" ? "点击 📁 选择技能文件夹。" : "Click 📁 to choose a skills folder."}
           </div>
         ) : skillsTree.length === 0 && !loading ? (
           <div style={{ color: "#555", padding: 16, fontSize: 12 }}>{t(uiLanguage, "no_files_found_skills")}</div>
@@ -138,13 +137,12 @@ export default function SkillsExplorer() {
   );
 }
 
-const inputStyle: React.CSSProperties = {
-  background: "#2a2a2a",
-  border: "1px solid #444",
-  borderRadius: 4,
-  color: "#d4d4d4",
-  padding: "5px 8px",
-  fontSize: 12,
-  outline: "none",
-  width: "100%",
+const browseBtnStyle: React.CSSProperties = {
+  background: "none",
+  border: "none",
+  cursor: "pointer",
+  fontSize: 16,
+  padding: "2px 4px",
+  lineHeight: 1,
+  color: "#888",
 };

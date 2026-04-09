@@ -263,11 +263,34 @@ When knowledge is missing, ghost nodes appear in the Brain Graph as hollow red c
 
 ## Knowledge Base
 
-MindAct works with plain markdown files. Files cross-reference each other using `[[filename]]` wiki-style links — the same format as Obsidian. The Brain Graph is built from these links automatically and updates live.
+MindAct works with plain markdown files. The Brain Graph is built from cross-references between files and updates live.
 
 Two KB types:
 - **Private** — your own files, editable, stored in your vault path
 - **Platform** — read-only reference modules (physics, algorithms, robots, etc.) installable from the platform library
+
+### Link syntax
+
+MindAct uses two linking conventions that drive the Brain Graph and dependency analysis:
+
+| Syntax | Meaning | Example |
+|--------|---------|---------|
+| `[[filename]]` | Link to a **private** KB file | `[[joint_constraints]]` |
+| `{{filename}}` | Cross-link to a **platform** KB module | `{{Safety_Constraints}}` |
+
+`[[wiki links]]` work exactly like Obsidian — use the filename without the `.md` extension. The graph traversal engine resolves both link types during dependency analysis, so a private file can declare that it depends on a platform module via `{{}}`, and the coverage checker will follow the chain across both KB layers.
+
+**Example private KB entry:**
+
+```markdown
+# Joint Angle Constraints
+
+Our 6-DOF arm has the following joint limits: ...
+
+## Related
+- [[workspace_config]]         ← links to another private file
+- {{Safety_Constraints}}       ← cross-links to platform module
+```
 
 ---
 
