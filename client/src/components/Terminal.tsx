@@ -15,6 +15,7 @@ function Terminal() {
   const terminalBanner = useStore(s => s.terminalBanner);
   const setTerminalBanner = useStore(s => s.setTerminalBanner);
   const { addHistoryEntry, setScrollToTerminalLine, setIsThinking } = useStore.getState();
+  const isThinking = useStore(s => s.isThinking);
 
   const uiLanguage = useStore(s => s.uiLanguage);
   const analysisMode = useStore(s => s.analysisMode);
@@ -90,6 +91,7 @@ function Terminal() {
       h.waitingForAssistant = true;
       h.lastAssistantLine = h.lineCount;
       h.assistantBuffer = "";
+      setIsThinking(true);
     }
     // Send each character as a separate PTY write, same as original xterm key-by-key behavior.
     // Bundling into one string ("1\r") can confuse Ink's raw-mode input handlers.
@@ -355,9 +357,21 @@ function Terminal() {
             const newlines = (data.match(/\n/g) || []).length;
             if (h.waitingForAssistant) h.assistantBuffer += data;
             h.lineCount += newlines;
+            // Detect when CLI returns to prompt — bracketed-paste enable is sent
+            // right before the input prompt is drawn (standard for Ink/readline CLIs).
+            // Also catch the plain "> " / "? " prompt fallback.
+            const stripped = stripAnsi(data);
+            if (
+              data.includes("\x1b[?2004h") ||
+              /\n[>?]\s*$/.test(stripped) ||
+              /\r[>?]\s/.test(stripped)
+            ) {
+              setIsThinking(false);
+            }
             t.write(data, () => { t.scrollToBottom(); });
           }, 16);
         } else if (msg.type === "exit") {
+          setIsThinking(false);
           // Delay notice a bit; if compatibility fallback message arrives, suppress it.
           if (exitNoticeTimerRef.current) clearTimeout(exitNoticeTimerRef.current);
           exitNoticeTimerRef.current = setTimeout(() => {
@@ -378,6 +392,7 @@ function Terminal() {
   }, []);
 
   const restart = useCallback(() => {
+    setIsThinking(false);
     const term = termRef.current;
     if (term) { term.clear(); term.writeln("\x1b[90m[Restarting...]\x1b[0m"); }
     if (wsRef.current?.readyState === WebSocket.OPEN) {
@@ -497,7 +512,18 @@ function Terminal() {
 
       {/* Header */}
       <div style={{ height: 32, display: "flex", alignItems: "center", padding: "0 12px", background: "#252526", borderBottom: "1px solid #333", flexShrink: 0, gap: 8 }}>
-        <span style={{ color: "#888", fontSize: 11, flex: 1 }}>TERMINAL — Claude Code</span>
+        <span style={{ color: "#888", fontSize: 11 }}>TERMINAL — PhysMind</span>
+        <span style={{ flex: 1 }} />
+        {isThinking && (
+          <span style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 11, color: "#4ec9b0" }}>
+            <span style={{ display: "flex", gap: 3, alignItems: "center" }}>
+              <span style={{ width: 5, height: 5, borderRadius: "50%", background: "#4ec9b0", animation: "thinkPulse 1.2s ease-in-out infinite" }} />
+              <span style={{ width: 5, height: 5, borderRadius: "50%", background: "#4ec9b0", animation: "thinkPulse 1.2s ease-in-out 0.2s infinite" }} />
+              <span style={{ width: 5, height: 5, borderRadius: "50%", background: "#4ec9b0", animation: "thinkPulse 1.2s ease-in-out 0.4s infinite" }} />
+            </span>
+            Thinking
+          </span>
+        )}
         <button onClick={restart} style={{ background: "#3a3a3a", border: "1px solid #555", borderRadius: 3, color: "#ccc", cursor: "pointer", fontSize: 11, padding: "2px 10px" }}>
           Restart
         </button>
@@ -732,6 +758,7 @@ function Terminal() {
 
       <style>{`
         @keyframes fadeInOut { 0%,100%{opacity:1} 50%{opacity:0.4} }
+        @keyframes thinkPulse { 0%,80%,100%{opacity:0.2;transform:scale(0.8)} 40%{opacity:1;transform:scale(1)} }
       `}</style>
     </div>
   );
