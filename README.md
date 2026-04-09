@@ -206,37 +206,31 @@ mindact/
 ### Installation
 
 ```bash
-# Clone with submodules (includes physmind-cli-rust)
-git clone --recurse-submodules https://github.com/KeploreAI-Lab/MindAct
+git clone https://github.com/KeploreAI-Lab/MindAct
 cd MindAct
 
-# One-shot setup: build CLI binary + install app dependencies
+# One-shot setup: install deps + build client
 ./setup.sh
 ```
 
 `setup.sh` will:
-1. Pull the `cli/` submodule
-2. `cargo build --release` the Rust CLI and link `physmind` to `/usr/local/bin`
-3. `bun install` all app dependencies
+1. Check / install **Bun** and **Node.js ≥18**
+2. `bun install` all dependencies (root + client)
+3. Build the React client → `client/dist/`
+4. Check for the Claude CLI and print install instructions if missing
 
 ### Configuration
 
-Open **Settings** in the top bar and enter your KeploreAI key (`kplr-...`). The key is saved to `~/.config/physmind/credentials` and used for all AI calls.
-
-### Run
-
 ```bash
-# Start everything (build client + server + Electron)
+# Start the app
 ./restart.sh
-
-# Or: server + frontend only (browser at http://localhost:5173)
-bun run dev
 ```
 
-On startup, open **Settings** in the top bar to configure:
-- **Vault path** — folder where your private knowledge base markdown files live
-- **Project path** — your working project directory (opened in the Claude Code terminal)
-- **Skills path** — root directory for reusable skills (can also be set per-session in the 专家能力 tab)
+On first launch, open **Settings** (top bar) and enter:
+- **KeploreAI key** (`kplr-...`) — saved to `~/.config/physmind/credentials`
+- **Vault path** — your private knowledge base folder
+- **Project path** — working project directory opened in the terminal
+- **Skills path** — folder of `.skill` files or unpacked skill directories
 
 ---
 

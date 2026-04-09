@@ -1,82 +1,90 @@
 #!/bin/bash
-# MindAct — one-shot setup: CLI (Rust) + app (Bun/Electron)
+# MindAct — one-shot setup
+# Usage: ./setup.sh
 set -e
 cd "$(dirname "${BASH_SOURCE[0]}")"
 
-GREEN='\033[0;32m'
-RED='\033[0;31m'
-YELLOW='\033[1;33m'
-NC='\033[0m'
-
-ok()   { echo -e "${GREEN}✅ $1${NC}"; }
-warn() { echo -e "${YELLOW}⚠️  $1${NC}"; }
-die()  { echo -e "${RED}❌ $1${NC}"; exit 1; }
+GREEN='\033[0;32m'; YELLOW='\033[1;33m'; RED='\033[0;31m'; NC='\033[0m'
+ok()   { echo -e "${GREEN}✅  $1${NC}"; }
+warn() { echo -e "${YELLOW}⚠️   $1${NC}"; }
+die()  { echo -e "${RED}❌  $1${NC}"; exit 1; }
 
 echo "======================================"
-echo "  MindAct Setup"
+echo "  MindAct — Setup"
 echo "======================================"
 
-# ── 1. Submodule ──────────────────────────────────────────────
+# ── 1. Bun ────────────────────────────────────────────────────
 echo ""
-echo "📦 Initialising CLI submodule..."
-git submodule update --init --recursive
-ok "Submodule ready"
-
-# ── 2. Build CLI (Rust) ───────────────────────────────────────
-echo ""
-echo "🦀 Building physmind CLI (Rust)..."
-if ! command -v cargo &>/dev/null; then
-  warn "cargo not found — installing Rust via rustup..."
-  curl -fsSL https://sh.rustup.rs | sh -s -- -y --no-modify-path
-  # Source cargo env for the rest of this script
-  # shellcheck source=/dev/null
-  source "$HOME/.cargo/env" 2>/dev/null || export PATH="$HOME/.cargo/bin:$PATH"
-  if ! command -v cargo &>/dev/null; then
-    die "Rust install failed. Please install manually: https://rustup.rs"
-  fi
-  ok "Rust installed ($(cargo --version))"
-fi
-
-cd cli/rust
-cargo build --release 2>&1 | tail -5
-CLI_BIN="$(pwd)/target/release/physmind"
-if [ ! -f "$CLI_BIN" ]; then
-  die "Build failed — binary not found at $CLI_BIN"
-fi
-ok "CLI built: $CLI_BIN"
-cd ../..
-
-# Link binary so it's on PATH
-LINK_TARGET="/usr/local/bin/physmind"
-if [ -w "/usr/local/bin" ] || sudo -n true 2>/dev/null; then
-  sudo ln -sf "$CLI_BIN" "$LINK_TARGET"
-  ok "Linked → $LINK_TARGET"
-else
-  warn "Could not link to /usr/local/bin (no sudo). Add this to your shell profile:"
-  echo "    export PATH=\"$(pwd)/cli/rust/target/release:\$PATH\""
-fi
-
-# ── 3. Install app dependencies (Bun) ────────────────────────
-echo ""
-echo "📦 Installing app dependencies..."
+echo "📦  Checking Bun..."
+export BUN_INSTALL="${BUN_INSTALL:-$HOME/.bun}"
+export PATH="$BUN_INSTALL/bin:$PATH"
 if ! command -v bun &>/dev/null; then
-  warn "bun not found — installing Bun..."
+  warn "Bun not found — installing..."
   curl -fsSL https://bun.sh/install | bash
-  export BUN_INSTALL="${BUN_INSTALL:-$HOME/.bun}"
   export PATH="$BUN_INSTALL/bin:$PATH"
-  if ! command -v bun &>/dev/null; then
-    die "Bun install failed. Please install manually: https://bun.sh"
-  fi
-  ok "Bun installed ($(bun --version))"
+  command -v bun &>/dev/null || die "Bun install failed. Visit https://bun.sh"
 fi
-bun install
-ok "Dependencies installed (Bun)"
+ok "Bun $(bun --version)"
 
-# ── 4. Done ───────────────────────────────────────────────────
+# ── 2. Node.js (required for node-pty native addon) ──────────
+echo ""
+echo "📦  Checking Node.js..."
+if ! command -v node &>/dev/null; then
+  die "Node.js >=18 is required (for node-pty). Install from https://nodejs.org"
+fi
+NODE_MAJOR=$(node -e "process.stdout.write(String(process.versions.node.split('.')[0]))")
+if [ "$NODE_MAJOR" -lt 18 ]; then
+  die "Node.js >=18 required (found $(node --version)). Update at https://nodejs.org"
+fi
+ok "Node.js $(node --version)"
+
+# ── 3. Install root dependencies ─────────────────────────────
+echo ""
+echo "📦  Installing root dependencies..."
+bun install
+ok "Root dependencies installed"
+
+# ── 4. Install & build client ────────────────────────────────
+echo ""
+echo "🔨  Building client..."
+cd client
+bun install
+bun run build
+cd ..
+ok "Client built -> client/dist/"
+
+# ── 5. Claude CLI check ───────────────────────────────────────
+echo ""
+echo "🔍  Checking for Claude CLI..."
+CLAUDE_FOUND=""
+for candidate in \
+    "${CLAUDE_BIN:-}" \
+    "$HOME/claw-code/rust/target/release/claw" \
+    "$HOME/.local/bin/claude" \
+    "$HOME/.npm-global/bin/claude" \
+    "/usr/local/bin/claude" \
+    "/opt/homebrew/bin/claude" \
+    "$(command -v claude 2>/dev/null || true)"; do
+  if [ -n "$candidate" ] && [ -x "$candidate" ]; then
+    CLAUDE_FOUND="$candidate"
+    break
+  fi
+done
+
+if [ -n "$CLAUDE_FOUND" ]; then
+  ok "CLI found: $CLAUDE_FOUND"
+else
+  warn "Claude CLI not found. Install it with:"
+  echo "      npm install -g @anthropic-ai/claude-code"
+  echo ""
+  echo "  MindAct will still launch — enter your kplr-... key in Settings"
+  echo "  and the CLI will be detected automatically once installed."
+fi
+
+# ── Done ──────────────────────────────────────────────────────
 echo ""
 echo "======================================"
 ok "Setup complete!"
 echo ""
-echo "  Start the app:  ./restart.sh"
-echo "  CLI binary:     $CLI_BIN"
+echo "  Launch the app:  ./restart.sh"
 echo "======================================"
