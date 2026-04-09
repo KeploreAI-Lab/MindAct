@@ -315,6 +315,23 @@ To use the examples, open **Settings** and set:
 - **Project path** → your own project directory
 - **Skills path** → `<repo>/examples/skills`
 
+### Loading the Platform KB (mock version)
+
+> **Note:** The full Platform KB is a proprietary module not distributed publicly. For experimentation, we provide a mock version inside `examples/knowledge-base/platform/`.
+
+The Platform KB is loaded separately from your private vault — it is read-only reference material (physics laws, standard algorithms, robot specs, etc.) that your private files can cross-link to via `{{filename}}`.
+
+**How to load it:**
+
+1. In the app, click the **link icon** (⬡) in the **top-left corner** to enable **Decision Dependency** mode.
+2. Switch the left panel to **Brain Graph** view.
+3. Click **BrainInspect** (top of the graph panel).
+4. In the **top-right input field** that appears, enter the path to the platform folder:
+   ```
+   <repo>/examples/knowledge-base/platform
+   ```
+5. Press Enter — the platform nodes will load into the graph as a separate layer, and `{{wiki-links}}` in your private files will now resolve against them.
+
 ---
 
 ## Running tests
