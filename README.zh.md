@@ -208,6 +208,10 @@ cd MindAct
 ```powershell
 git clone --recurse-submodules https://github.com/KeploreAI-Lab/MindAct
 cd MindAct
+
+# 若提示"无法加载脚本，因为在此系统上禁止运行脚本"，先执行一次：
+Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
+
 .\setup.ps1     # 自动安装 Bun + Rust、编译 physmind.exe、安装依赖
 .\restart.ps1   # 启动
 ```

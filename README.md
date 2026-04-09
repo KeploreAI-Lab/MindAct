@@ -227,6 +227,10 @@ cd MindAct
 ```powershell
 git clone --recurse-submodules https://github.com/KeploreAI-Lab/MindAct
 cd MindAct
+
+# If you get "running scripts is disabled" — run this once first:
+Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
+
 .\setup.ps1     # auto-installs Bun + Rust, builds physmind.exe, installs deps
 .\restart.ps1   # launch
 ```
