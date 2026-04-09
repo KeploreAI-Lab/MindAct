@@ -101,6 +101,9 @@ function buildClawEnv() {
   }
   // Always inject proxy URL so claw routes to KeploreAI regardless of local shell config
   env.DASHSCOPE_BASE_URL = 'https://physmind-proxy.marvin-gao-cs.workers.dev/v1';
+  // Point claw at a MindAct-specific config dir so ~/.claw/credentials.json
+  // (which may contain a saved Anthropic OAuth token) is never read.
+  env.CLAW_CONFIG_HOME = path.join(require('os').homedir(), '.config', 'physmind', 'claw');
   env.TERM = 'xterm-256color';
   env.COLORTERM = 'truecolor';
   return env;
