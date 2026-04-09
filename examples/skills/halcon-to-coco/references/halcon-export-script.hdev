@@ -1,0 +1,160 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<hdevelop file_version="1.2" halcon_version="24.11.1.0">
+<procedure name="main">
+<interface/>
+<body>
+
+<c>* ══════════════════════════════════════════════════════</c>
+<c>* HALCON Deep Learning Dataset → PNG Images + Masks Export</c>
+<c>* Converts a HALCON .hdict dataset to open-source format:</c>
+<c>*   images/train|val/*.png</c>
+<c>*   masks/train|val/<name>_id_<ID>_inst0<j>_label_<lid>.png</c>
+<c>*   meta_train.csv  and  meta_val.csv</c>
+<c>*</c>
+<c>* After running this script, use the Python converter to</c>
+<c>* assemble COCO JSON or YOLO format from the exported files.</c>
+<c>* ══════════════════════════════════════════════════════</c>
+<c></c>
+<c>* ── USER CONFIG ─────────────────────────────────────</c>
+<c>* 1. Path to your HALCON Deep Learning .hdict file</c>
+<l>HdictPath := 'C:/your_project/dataset/my_dataset.hdict'</l>
+<c></c>
+<c>* 2. Path to the folder containing source images</c>
+<c>*    (Leave empty '' to use the path stored inside the hdict)</c>
+<l>ImageDirOverride := ''</l>
+<c></c>
+<c>* 3. Output root folder (will be created if it does not exist)</c>
+<l>OutRoot := 'C:/your_project/export_coco/my_dataset'</l>
+<c>* ── END CONFIG ───────────────────────────────────────</c>
+<c></c>
+
+<c>* System settings</c>
+<l>set_system ('clip_region', 'false')</l>
+<l>dev_update_off ()</l>
+<c></c>
+
+<c>* ── Build output paths ───────────────────────────────</c>
+<l>OutImgDirTrain  := OutRoot + '/images/train'</l>
+<l>OutImgDirVal    := OutRoot + '/images/val'</l>
+<l>OutMaskDirTrain := OutRoot + '/masks/train'</l>
+<l>OutMaskDirVal   := OutRoot + '/masks/val'</l>
+<l>MetaTrainPath   := OutRoot + '/meta_train.csv'</l>
+<l>MetaValPath     := OutRoot + '/meta_val.csv'</l>
+<c></c>
+
+<c>* ── Create output folders ────────────────────────────</c>
+<l>make_dir (OutRoot)</l>
+<l>make_dir (OutRoot + '/images')</l>
+<l>make_dir (OutRoot + '/masks')</l>
+<l>make_dir (OutImgDirTrain)</l>
+<l>make_dir (OutImgDirVal)</l>
+<l>make_dir (OutMaskDirTrain)</l>
+<l>make_dir (OutMaskDirVal)</l>
+<c></c>
+
+<c>* ── 1) Read .hdict ───────────────────────────────────</c>
+<l>read_dict (HdictPath, [], [], Dict)</l>
+<l>get_dict_tuple (Dict, 'samples', Samples)</l>
+<c></c>
+<c>* Use ImageDirOverride if provided, otherwise read from hdict</c>
+<l>if (ImageDirOverride != '')</l>
+<l>    ImageDir := ImageDirOverride</l>
+<l>else</l>
+<l>    get_dict_tuple (Dict, 'image_dir', ImageDir)</l>
+<l>endif</l>
+<c></c>
+<l>NumSamples := |Samples|</l>
+<l>dev_inspect_ctrl (ImageDir)</l>
+<l>dev_inspect_ctrl (NumSamples)</l>
+<c></c>
+
+<c>* ── 2) Write CSV headers ─────────────────────────────</c>
+<l>open_file (MetaTrainPath, 'output', FTrain)</l>
+<l>fwrite_string (FTrain, 'image_file,mask_file,class_id\n')</l>
+<l>open_file (MetaValPath, 'output', FVal)</l>
+<l>fwrite_string (FVal, 'image_file,mask_file,class_id\n')</l>
+<c></c>
+
+<c>* ── 3) Loop over all samples ─────────────────────────</c>
+<l>for i := 0 to NumSamples - 1 by 1</l>
+<l>    tuple_select (Samples, i, Sample)</l>
+<c></c>
+<l>    get_dict_tuple (Sample, 'image_id',        ImageID)</l>
+<l>    get_dict_tuple (Sample, 'image_file_name', ImgName)</l>
+<l>    get_dict_tuple (Sample, 'split',           SplitName)</l>
+<l>    get_dict_tuple (Sample, 'bbox_label_id',   LabelIDs)</l>
+<c></c>
+<c>    * Read source image</c>
+<l>    ImgPath := ImageDir + ImgName</l>
+<l>    read_image (Image, ImgPath)</l>
+<l>    get_image_size (Image, W, H)</l>
+<c></c>
+<c>    * Extract base filename (strip leading path)</c>
+<l>    tuple_strrchr (ImgName, '/', Pos)</l>
+<l>    if (Pos >= 0)</l>
+<l>        tuple_strlen (ImgName, L)</l>
+<l>        tuple_substr (ImgName, Pos + 1, L - 1, FileName)</l>
+<l>    else</l>
+<l>        FileName := ImgName</l>
+<l>    endif</l>
+<c></c>
+<c>    * Strip extension to get BaseName</c>
+<l>    tuple_strrchr (FileName, '.', DotPos)</l>
+<l>    if (DotPos >= 0)</l>
+<l>        tuple_substr (FileName, 0, DotPos - 1, BaseName)</l>
+<l>    else</l>
+<l>        BaseName := FileName</l>
+<l>    endif</l>
+<c></c>
+<c>    * Select output directories by split</c>
+<l>    if (SplitName == 'train')</l>
+<l>        OutImgDir  := OutImgDirTrain</l>
+<l>        OutMaskDir := OutMaskDirTrain</l>
+<l>        FHandle    := FTrain</l>
+<l>    else</l>
+<l>        OutImgDir  := OutImgDirVal</l>
+<l>        OutMaskDir := OutMaskDirVal</l>
+<l>        FHandle    := FVal</l>
+<l>    endif</l>
+<c></c>
+<c>    * Export image as PNG</c>
+<l>    OutImgPath := OutImgDir + '/' + BaseName + '_id_' + ImageID + '.png'</l>
+<l>    write_image (Image, 'png', 0, OutImgPath)</l>
+<c></c>
+<c>    * Get mask regions (one region object per instance)</c>
+<l>    get_dict_object (Region, Sample, 'mask')</l>
+<l>    count_obj (Region, N)</l>
+<c></c>
+<c>    * Loop over each instance mask</c>
+<l>    for j := 1 to N by 1</l>
+<l>        select_obj (Region, OneInst, j)</l>
+<l>        label_id := LabelIDs[j - 1]</l>
+<c></c>
+<c>        * Convert region to binary mask image (white=255 on black background)</c>
+<l>        gen_image_const (MaskImg, 'byte', W, H)</l>
+<l>        paint_region (OneInst, MaskImg, MaskImg, 255, 'fill')</l>
+<c></c>
+<c>        * Export mask PNG — filename encodes instance index and label ID</c>
+<l>        OutMaskPath := OutMaskDir + '/' + BaseName + '_id_' + ImageID + '_inst0' + j + '_label_' + label_id + '.png'</l>
+<l>        write_image (MaskImg, 'png', 0, OutMaskPath)</l>
+<c></c>
+<c>        * Append row to CSV: image_path, mask_path, class_id</c>
+<l>        fwrite_string (FHandle, OutImgPath + ',' + OutMaskPath + ',' + label_id + '\n')</l>
+<l>    endfor</l>
+<c></c>
+<l>endfor</l>
+<c></c>
+
+<c>* ── 4) Close files and report ────────────────────────</c>
+<l>close_file (FTrain)</l>
+<l>close_file (FVal)</l>
+<c></c>
+<l>dev_disp_text ('Export complete! Now run the Python converter on OutRoot.', 'window', 12, 12, 'black', [], [])</l>
+<l>dev_inspect_ctrl (OutRoot)</l>
+
+</body>
+<docu id="main">
+<parameters/>
+</docu>
+</procedure>
+</hdevelop>

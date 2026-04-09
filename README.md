@@ -271,6 +271,38 @@ Two KB types:
 
 ---
 
+## Examples
+
+The `examples/` directory contains a ready-to-use sample workspace for a robotics / computer vision project:
+
+```
+examples/
+├── knowledge-base/
+│   ├── private/          # Domain-specific private KB (physics, control, embodied AI)
+│   │   ├── continuum_mechanics.md
+│   │   ├── control_dynamics.md
+│   │   ├── electromagnetism_maxwell.md
+│   │   └── ...
+│   └── platform/         # Read-only platform reference modules
+│       ├── Action_Space_Definition.md
+│       ├── Inference_Latency_Budget.md
+│       ├── Safety_Constraints.md
+│       └── ...
+└── skills/               # Reusable skill modules (.skill archives unpacked)
+    ├── cv-dataset-analyzer/SKILL.md
+    ├── halcon-python-api-bridge/SKILL.md
+    ├── model-deployment-profiler/SKILL.md
+    ├── yolov8-industrial-finetune/SKILL.md
+    └── ...
+```
+
+To use the examples, open **Settings** and set:
+- **Vault path** → `<repo>/examples/knowledge-base/private`
+- **Project path** → your own project directory
+- **Skills path** → `<repo>/examples/skills`
+
+---
+
 ## Running tests
 
 ```bash
