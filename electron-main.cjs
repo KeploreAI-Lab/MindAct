@@ -1,6 +1,13 @@
 const { app, BrowserWindow, session, ipcMain, dialog } = require('electron');
 const path = require('path');
 
+// Linux: Chromium aborts if chrome-sandbox is not root-owned + setuid (common in node_modules).
+// restart.sh exports MINDACT_ELECTRON_NO_SANDBOX=1 when needed; you can set it manually too.
+if (process.platform === 'linux' && process.env.MINDACT_ELECTRON_NO_SANDBOX === '1') {
+  app.commandLine.appendSwitch('no-sandbox');
+  app.commandLine.appendSwitch('disable-setuid-sandbox');
+}
+
 function createWindow() {
   const win = new BrowserWindow({
     width: 1400,

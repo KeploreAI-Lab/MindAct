@@ -1,5 +1,5 @@
 #!/bin/bash
-# MindAct — stop old processes, rebuild client, start server + Electron
+# MindAct — stop old processes, rebuild client, start server (+ optional Electron)
 set -e
 cd "$(dirname "${BASH_SOURCE[0]}")"
 
@@ -60,8 +60,20 @@ for i in $(seq 1 20); do
   sleep 0.5
 done
 
-# ── Launch Electron ───────────────────────────────────────────
-echo "🖥   Launching Electron..."
+# ── Desktop shell (Electron, optional) ────────────────────────
+SKIP_ELECTRON=0
+if [ "${MINDACT_SKIP_ELECTRON:-}" = "1" ]; then
+  SKIP_ELECTRON=1
+  echo "🌐   Electron skipped (MINDACT_SKIP_ELECTRON=1 — browser UI: 3001 + Vite 5173)."
+else
+  echo "🖥   Electron (desktop window, optional)..."
+fi
+
+if [ "$SKIP_ELECTRON" -eq 0 ] && [ "$(uname -s)" = "Linux" ] && [ -f "scripts/check-linux-electron.sh" ]; then
+  if ! bash scripts/check-linux-electron.sh; then
+    SKIP_ELECTRON=1
+  fi
+fi
 
 # Resolve electron binary (works on macOS, Linux, and Windows/WSL)
 find_electron() {
@@ -82,20 +94,68 @@ find_electron() {
   echo ""
 }
 
-ELECTRON="$(find_electron)"
-if [ -z "$ELECTRON" ]; then
-  echo "❌  Electron not found. Run ./setup.sh first."
-  exit 1
+ELECTRON=""
+if [ "$SKIP_ELECTRON" -eq 0 ]; then
+  ELECTRON="$(find_electron)"
+  if [ -z "$ELECTRON" ]; then
+    echo "❌  Electron not found. Run ./setup.sh first."
+    exit 1
+  fi
 fi
 
-if [ "$ELECTRON" = "npx" ]; then
+# Chromium SUID sandbox on Linux: chrome-sandbox must be root-owned + setuid (4755) or Electron aborts.
+CHROME_SANDBOX="node_modules/electron/dist/chrome-sandbox"
+if [ "$SKIP_ELECTRON" -eq 0 ] && [ "$(uname -s)" = "Linux" ] && [ -f "$CHROME_SANDBOX" ]; then
+  _sb_uid=$(stat -c '%u' "$CHROME_SANDBOX" 2>/dev/null || echo 1)
+  if [ "$_sb_uid" != "0" ] || ! [ -u "$CHROME_SANDBOX" ]; then
+    export MINDACT_ELECTRON_NO_SANDBOX=1
+  fi
+fi
+
+if [ "$SKIP_ELECTRON" -eq 0 ] && [ "${MINDACT_ELECTRON_NO_SANDBOX:-}" = "1" ]; then
+  echo "⚠️   Electron will use --no-sandbox (chrome-sandbox is not root setuid; typical under node_modules)."
+  echo "    Optional harden: sudo chown root:root $CHROME_SANDBOX && sudo chmod 4755 $CHROME_SANDBOX"
+fi
+
+if [ "$SKIP_ELECTRON" -eq 1 ]; then
+  if [ "${MINDACT_SKIP_ELECTRON:-}" != "1" ]; then
+    echo "⚠️   Electron skipped (GTK/Chromium libraries missing — see check-linux-electron.sh above)."
+  fi
+  echo "    API + static UI:  http://localhost:3001"
+  echo "    Dev UI (proxy):   cd client && bun run dev  →  http://localhost:5173"
+elif [ "$ELECTRON" = "npx" ]; then
   env -u ELECTRON_RUN_AS_NODE \
     npx electron electron-main.cjs > /tmp/mindact-electron.log 2>&1 &
+  ELECTRON_PID=$!
 else
   env -u ELECTRON_RUN_AS_NODE \
     "$ELECTRON" electron-main.cjs > /tmp/mindact-electron.log 2>&1 &
+  ELECTRON_PID=$!
 fi
+# Note: ELECTRON_PID may be a wrapper (npx); crash detection relies on log grep below.
 
-echo "✅  MindAct is running"
+echo "✅  MindAct server is running"
 echo "    Server log:   /tmp/mindact-server.log"
-echo "    Electron log: /tmp/mindact-electron.log"
+if [ "$SKIP_ELECTRON" -eq 0 ]; then
+  echo "    Electron log: /tmp/mindact-electron.log"
+  sleep 2
+  if [ -f /tmp/mindact-electron.log ] && grep -q "error while loading shared libraries" /tmp/mindact-electron.log 2>/dev/null; then
+    echo ""
+    echo "❌  Electron exited immediately (library error). Last lines:"
+    tail -3 /tmp/mindact-electron.log
+    echo "    Run:  bash scripts/check-linux-electron.sh"
+  elif [ -f /tmp/mindact-electron.log ] && grep -q "setuid_sandbox_host" /tmp/mindact-electron.log 2>/dev/null; then
+    echo ""
+    echo "❌  Electron SUID sandbox error. ./restart.sh sets MINDACT_ELECTRON_NO_SANDBOX when needed;"
+    echo "    manual start: export MINDACT_ELECTRON_NO_SANDBOX=1  (see README → Troubleshooting)."
+    tail -3 /tmp/mindact-electron.log
+  elif [ -f /tmp/mindact-electron.log ] && grep -q "Missing X server" /tmp/mindact-electron.log 2>/dev/null; then
+    echo ""
+    echo "❌  Electron needs a display. Use:  MINDACT_SKIP_ELECTRON=1 ./restart.sh  then  cd client && bun run dev"
+    tail -3 /tmp/mindact-electron.log
+  elif [ -n "${ELECTRON_PID:-}" ] && ! kill -0 "$ELECTRON_PID" 2>/dev/null; then
+    echo ""
+    echo "⚠️  Electron process ended quickly. Check:  /tmp/mindact-electron.log"
+    [ -f /tmp/mindact-electron.log ] && tail -5 /tmp/mindact-electron.log
+  fi
+fi
