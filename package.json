@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.82.0",
+    "@keploreai/physmind": "^2.1.891",
     "adm-zip": "^0.5.17",
     "node-pty": "^1.0.0"
   },

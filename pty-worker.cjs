@@ -68,39 +68,41 @@ function isExecutable(cmd) {
   }
 }
 
-// Resolve the CLI binary — prefer project-local physmind, then CLAUDE_BIN env
+// Resolve the CLI binary — prefer @keploreai/physmind npm package, then PHYSMIND_BIN env
 function findClaude() {
-  const os = require('os');
   const isWin = process.platform === 'win32';
-  const bin = isWin ? 'physmind.exe' : 'physmind';
+  const binName = isWin ? 'physmind.cmd' : 'physmind';
   const candidates = [
     // Explicit override via env
-    process.env.CLAUDE_BIN,
-    // setup.ps1 copies physmind.exe here
-    isWin ? path.join(os.homedir(), '.cargo', 'bin', 'physmind.exe') : null,
-    // setup.sh links physmind here
-    isWin ? null : '/usr/local/bin/physmind',
-    // Project-local build
-    path.join(__dirname, 'cli', 'rust', 'target', 'release', bin),
-    // x64 cross-compiled target (ARM64 Windows)
-    isWin ? path.join(__dirname, 'cli', 'rust', 'target', 'x86_64-pc-windows-msvc', 'release', 'physmind.exe') : null,
-    // Dev machine claw-code checkout
-    path.join(os.homedir(), 'claw-code', 'rust', 'target', 'release', bin),
+    process.env.PHYSMIND_BIN || process.env.CLAUDE_BIN,
+    // npm local install: node_modules/.bin/physmind (preferred)
+    path.join(__dirname, 'node_modules', '.bin', binName),
+    // npm package entry directly via node
+    // (fallback if .bin symlink doesn't have execute bit)
+    path.join(__dirname, 'node_modules', '@keploreai', 'physmind', 'dist', 'run.js'),
     // System PATH
     'physmind',
   ].filter(Boolean);
   for (const c of candidates) {
     if (!c) continue;
+    // For .js entry files, check existence rather than executability
+    if (c.endsWith('.js') && fs.existsSync(c)) return c;
     if (isExecutable(c)) return c;
   }
   return null;
 }
 
-function resolveEntryCommand() {
-  const claudeBin = findClaude();
-  if (claudeBin) {
-    return { command: claudeBin, args: [] };
+// If the resolved binary is a .js file, wrap it with node
+function buildEntryCommand(bin) {
+  if (bin.endsWith('.js')) {
+    return { command: process.execPath, args: [bin] };
   }
+  return { command: bin, args: [] };
+}
+
+function resolveEntryCommand() {
+  const bin = findClaude();
+  if (bin) return buildEntryCommand(bin);
   return null;
 }
 
@@ -172,8 +174,8 @@ function spawnTerm(cols, rows) {
     send({
       type: 'data',
       data:
-        '\r\n\x1b[31m[MindAct] Claude CLI not found.\x1b[0m\r\n' +
-        '\x1b[90mInstall: npm install -g @anthropic-ai/claude-code\x1b[0m\r\n\r\n',
+        '\r\n\x1b[31m[MindAct] PhysMind CLI not found.\x1b[0m\r\n' +
+        '\x1b[90mRun: npm install  (installs @keploreai/physmind automatically)\x1b[0m\r\n\r\n',
     });
     send({ type: 'exit' });
     process.exit(1);
