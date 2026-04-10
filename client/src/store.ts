@@ -65,6 +65,7 @@ interface AppState {
   pendingGhostFile: { name: string; template: string } | null; // unsaved ghost file being edited
   logEntries: LogEntry[];
   logDrawerOpen: boolean;
+  analysisProgress: { current: number; total: number; fileName: string } | null;
 
   setConfig: (c: Config) => void;
   setConfigLoaded: (v: boolean) => void;
@@ -95,6 +96,7 @@ interface AppState {
   addLogEntry: (text: string) => void;
   clearLog: () => void;
   setLogDrawerOpen: (v: boolean) => void;
+  setAnalysisProgress: (p: { current: number; total: number; fileName: string } | null) => void;
 }
 
 let _logId = 0;
@@ -125,6 +127,7 @@ export const useStore = create<AppState>((set) => ({
   pendingGhostFile: null,
   logEntries: [],
   logDrawerOpen: false,
+  analysisProgress: null,
 
   setConfig: (c) => set({ config: c }),
   setConfigLoaded: (v) => set({ configLoaded: v }),
@@ -168,4 +171,5 @@ export const useStore = create<AppState>((set) => ({
   })),
   clearLog: () => set({ logEntries: [] }),
   setLogDrawerOpen: (v) => set({ logDrawerOpen: v }),
+  setAnalysisProgress: (p) => set({ analysisProgress: p }),
 }));

@@ -267,6 +267,48 @@ ${missingNote}---
 Task: ${task}`;
 }
 
+// ── Stage 3 (per-file): File-by-file matching ─────────────────────────────
+
+const FILE_MATCH_SYSTEM_EN = `You are a knowledge file matching expert.
+Given a single file (with a content snippet) and a list of required knowledge dependencies,
+determine which dependencies this file covers. Only list dependencies that are actually covered.
+Output JSON only, no other content.`;
+
+const FILE_MATCH_SYSTEM_ZH = `你是一个知识文件匹配专家。
+给定一个文件（含内容摘要）和一批需要的知识依赖项，
+判断该文件覆盖了哪些依赖项。只列出实际覆盖的依赖项。
+只输出 JSON，不要其他内容。`;
+
+export function getFileMatchSystem(lang: Lang): string {
+  return lang === "zh" ? FILE_MATCH_SYSTEM_ZH : FILE_MATCH_SYSTEM_EN;
+}
+
+export function buildFileMatchMessage(params: {
+  file: { name: string; source: string; snippet: string };
+  dependencies: { name: string; description: string; level: string }[];
+}, lang: Lang): string {
+  const deps = params.dependencies.map((d, i) => `${i + 1}. [${d.level}] ${d.name}: ${d.description}`).join("\n");
+
+  if (lang === "zh") {
+    return `文件：[${params.file.source.toUpperCase()}] ${params.file.name}
+内容摘要：${params.file.snippet}
+
+需要匹配的依赖项：
+${deps}
+
+该文件覆盖了上述哪些依赖？只列出有覆盖的项，若无覆盖返回空数组。
+{"covered": [{"dependency": "依赖名称", "coverage": "full|partial|none"}]}`;
+  }
+  return `File: [${params.file.source.toUpperCase()}] ${params.file.name}
+Content snippet: ${params.file.snippet}
+
+Dependencies to check:
+${deps}
+
+Which of these dependencies does this file cover? Only list covered ones; if none, return empty array.
+{"covered": [{"dependency": "dep name", "coverage": "full|partial|none"}]}`;
+}
+
 // Keep old exports for backward compatibility
 export const DETECT_SYSTEM = DETECT_SYSTEM_ZH;
 export const DECOMPOSE_SYSTEM = DECOMPOSE_SYSTEM_ZH;

@@ -15,8 +15,8 @@ export const DEFAULT_MAX_TOKENS = 4096;
 
 // KeploreAI proxy — same endpoint the CLI uses (pty-worker.cjs DASHSCOPE_BASE_URL)
 const KPLR_BASE_URL = "https://physmind-proxy.marvin-gao-cs.workers.dev/v1";
-const DASHSCOPE_DEFAULT_MODEL = "qwen-plus";
-const DASHSCOPE_FAST_MODEL = "qwen-plus";
+const DASHSCOPE_DEFAULT_MODEL = "qwen3.6-plus";
+const DASHSCOPE_FAST_MODEL = "qwen3.6-plus";
 
 function readKplrKey(): string | null {
   const credFile = join(homedir(), ".config", "physmind", "credentials");

@@ -15,6 +15,7 @@ import {
   getDetectSystem, buildDetectMessage,
   getDecomposeSystem, buildDecomposeMessage,
   getMatchSystem, buildMatchMessage,
+  getFileMatchSystem, buildFileMatchMessage,
   getTemplateSystem, buildTemplateMessage,
   computeConfidence, confidenceLevel,
   buildEnrichedPrompt,
@@ -51,7 +52,13 @@ function applyCalibration(score: number): number {
 
 // ── Public types ───────────────────────────────────────────────────────────
 
-export type ProgressEventType = "log" | "highlight" | "ghost" | "report" | "error";
+export type ProgressEventType = "log" | "highlight" | "ghost" | "report" | "error" | "file_progress";
+
+export interface FileProgressData {
+  current: number;
+  total: number;
+  fileName: string;
+}
 
 export interface ProgressEvent {
   type: ProgressEventType;
@@ -280,18 +287,95 @@ ${hints}
       level: "helpful",
     }));
 
-    const matchRaw = await aiCall({
-      system: getMatchSystem(lang),
-      messages: [{ role: "user", content: buildMatchMessage({ dependencies: effectiveDeps as any, availableFiles }, lang) }],
-      model: FAST_MODEL,
-      maxTokens: 1024,
-      temperature: 0,
-    });
-    console.log("[DM] match raw:", matchRaw.slice(0, 500));
-    const matchResult = parseJson(matchRaw) as {
-      matches: { dependency: string; level: string; covered_by: string[]; coverage: string }[];
+    // Pre-select up to 20 candidate files using retrieveContext
+    const allDepNames = effectiveDeps.map((d: any) => d.name).join(" ");
+    const candidateFiles = retrieveContext({ query: allDepNames, allFiles, topK: 20 }).files;
+
+    // Analyze files concurrently with immediate per-file progress feedback
+    const depCoverage = new Map<string, { covered_by: string[]; coverage: string }>();
+    const N = candidateFiles.length;
+    let started = 0;
+    const CONCURRENCY = 5;
+
+    // Semaphore: at most CONCURRENCY files in-flight at once
+    // Each file emits progress when it STARTS (not when batch ends) so UI updates immediately
+    const sem = { slots: CONCURRENCY };
+    const queue = [...candidateFiles];
+    const pending: Promise<void>[] = [];
+
+    const runFile = async (cf: typeof candidateFiles[0], idx: number) => {
+      // Emit progress as soon as this file starts
+      onEvent({
+        type: "file_progress",
+        data: { current: idx + 1, total: N, fileName: cf.name } as FileProgressData,
+      });
+
+      const fileSnippet = cf.content.replace(/\n+/g, " ").slice(0, 300);
+      const fileSource = (allFiles.find(f => f.name === cf.name)?.source ?? "private") as string;
+      let result: { covered?: { dependency: string; coverage: string }[] } = { covered: [] };
+      try {
+        const raw = await aiCall({
+          system: getFileMatchSystem(lang),
+          messages: [{
+            role: "user",
+            content: buildFileMatchMessage(
+              { file: { name: cf.name, source: fileSource, snippet: fileSnippet }, dependencies: effectiveDeps as any },
+              lang
+            ),
+          }],
+          model: FAST_MODEL,
+          maxTokens: 256,
+          temperature: 0,
+        });
+        result = parseJson(raw) as { covered?: { dependency: string; coverage: string }[] };
+      } catch { /* skip on error */ }
+
+      for (const item of result?.covered ?? []) {
+        const depName = String(item.dependency ?? "").trim();
+        if (!depName || item.coverage === "none") continue;
+        const existing = depCoverage.get(depName);
+        if (!existing) {
+          depCoverage.set(depName, { covered_by: [cf.name], coverage: item.coverage });
+        } else {
+          if (!existing.covered_by.includes(cf.name)) existing.covered_by.push(cf.name);
+          if (item.coverage === "full") existing.coverage = "full";
+          else if (item.coverage === "partial" && existing.coverage === "none") existing.coverage = "partial";
+        }
+      }
     };
-    let matches = stabilizeMatches(matchResult.matches ?? [], effectiveDeps as any, allFiles);
+
+    // Launch all files, respecting concurrency limit
+    await new Promise<void>((resolve) => {
+      let inFlight = 0;
+      let nextIdx = 0;
+
+      const launch = () => {
+        while (inFlight < CONCURRENCY && nextIdx < N) {
+          const idx = nextIdx++;
+          inFlight++;
+          runFile(candidateFiles[idx], idx).finally(() => {
+            inFlight--;
+            if (nextIdx < N) launch();
+            else if (inFlight === 0) resolve();
+          });
+        }
+        if (N === 0) resolve();
+      };
+      launch();
+    });
+
+    // Build matches array in the same shape as before
+    const rawMatches = (effectiveDeps as any[]).map((dep: any) => {
+      const cov = depCoverage.get(dep.name);
+      return {
+        dependency: dep.name,
+        level: dep.level ?? "helpful",
+        covered_by: cov?.covered_by ?? [],
+        coverage: cov?.coverage ?? "none",
+      };
+    });
+
+    let matches = stabilizeMatches(rawMatches, effectiveDeps as any, allFiles);
     if (matches.length === 0 && effectiveDeps.length > 0) {
       log(m("match_fallback"));
       matches = effectiveDeps.map((dep: any) => {
