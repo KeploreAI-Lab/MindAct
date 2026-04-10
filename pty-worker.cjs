@@ -85,10 +85,20 @@ function resolveEntryCommand() {
   return null;
 }
 
-// Read kplr key from ~/.config/physmind/credentials (same file claw writes to).
+// Cross-platform credentials directory:
+//   macOS/Linux: ~/.config/physmind
+//   Windows:     %APPDATA%\physmind
+function physmindConfigDir() {
+  if (process.platform === 'win32') {
+    return path.join(process.env.APPDATA || require('os').homedir(), 'physmind');
+  }
+  return path.join(require('os').homedir(), '.config', 'physmind');
+}
+
+// Read kplr key from the credentials file.
 function readKplrKey() {
   try {
-    const credFile = path.join(require('os').homedir(), '.config', 'physmind', 'credentials');
+    const credFile = path.join(physmindConfigDir(), 'credentials');
     if (!fs.existsSync(credFile)) return null;
     const lines = fs.readFileSync(credFile, 'utf-8').split('\n');
     for (const line of lines) {
@@ -99,9 +109,7 @@ function readKplrKey() {
   return null;
 }
 
-// Build the environment for claw: strip ANTHROPIC_API_KEY so claw doesn't
-// fall back to Claude, and inject KPLR_KEY + DASHSCOPE_API_KEY from the
-// credentials file so claw works in non-interactive PTY mode.
+// Build the environment: strip Anthropic credentials, inject KPLR/DashScope keys.
 function buildClawEnv() {
   const env = { ...process.env };
   delete env.ANTHROPIC_API_KEY;
@@ -114,13 +122,14 @@ function buildClawEnv() {
     delete env.DASHSCOPE_API_KEY;
     delete env.KPLR_KEY;
   }
-  // Always inject proxy URL so claw routes to KeploreAI regardless of local shell config
+  // Always inject proxy URL so physmind routes to KeploreAI
   env.DASHSCOPE_BASE_URL = 'https://physmind-proxy.marvin-gao-cs.workers.dev/v1';
-  // Point claw at a MindAct-specific config dir so ~/.claw/credentials.json
-  // (which may contain a saved Anthropic OAuth token) is never read.
-  env.CLAW_CONFIG_HOME = path.join(require('os').homedir(), '.config', 'physmind', 'claw');
-  env.TERM = 'xterm-256color';
-  env.COLORTERM = 'truecolor';
+  // Isolate physmind config so saved Anthropic OAuth tokens are never read
+  env.CLAW_CONFIG_HOME = path.join(physmindConfigDir(), 'claw');
+  if (process.platform !== 'win32') {
+    env.TERM = 'xterm-256color';
+    env.COLORTERM = 'truecolor';
+  }
   return env;
 }
 

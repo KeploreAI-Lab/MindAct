@@ -3,9 +3,10 @@
   "version": "1.0.0",
   "type": "module",
   "scripts": {
-    "dev": "concurrently \"bun run server.ts\" \"cd client && bun run dev\"",
+    "postinstall": "node -e \"try{require('./node_modules/node-pty');console.log('✓ node-pty OK')}catch(e){console.error('✗ node-pty failed:',e.message)}\"",
+    "dev": "concurrently \"bun run server.ts\" \"bun run --cwd client dev\"",
     "server": "bun run server.ts",
-    "build": "cd client && bun run build",
+    "build": "bun run --cwd client build",
     "start": "bun run build && bun run server.ts",
     "calib:collect": "CALIB_SAMPLES=100 bun run scripts/calibration_collect.ts",
     "calib:fit": "bun run scripts/calibration_fit.ts"
