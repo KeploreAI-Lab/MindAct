@@ -2,7 +2,31 @@
 // Communicates via newline-delimited JSON on stdin/stdout.
 'use strict';
 
-const pty = require('./node_modules/node-pty');
+function sendLine(obj) {
+  process.stdout.write(JSON.stringify(obj) + '\n');
+}
+
+let pty;
+try {
+  pty = require('./node_modules/node-pty');
+} catch (err) {
+  const msg = err instanceof Error ? err.message : String(err);
+  const rebuildCmd = 'cd node_modules/node-pty && npx --yes node-gyp@10 rebuild';
+  const hint =
+    process.platform === 'linux'
+      ? `From repo root: ${rebuildCmd}  (e.g. apt install build-essential)`
+      : `From repo root: ${rebuildCmd}`;
+  sendLine({
+    type: 'data',
+    data:
+      '\r\n\x1b[31m[MindAct] Terminal backend (node-pty) failed to load.\x1b[0m\r\n' +
+      '\x1b[90m' + msg + '\x1b[0m\r\n' +
+      '\x1b[90m' + hint + '\x1b[0m\r\n\r\n',
+  });
+  sendLine({ type: 'exit' });
+  process.exit(1);
+}
+
 const readline = require('readline');
 const fs = require('fs');
 const path = require('path');

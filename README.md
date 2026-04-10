@@ -167,7 +167,7 @@ mindact/
 ├── cli/                       # physmind CLI (git submodule → physmind-cli-rust)
 │   └── rust/                  # Rust workspace — cargo build --release
 ├── setup.sh                   # One-shot setup: build CLI + install deps
-├── restart.sh                 # Dev launcher: build client + start server + Electron
+├── restart.sh                 # Dev launcher: build client + start server (+ optional Electron)
 ├── server.ts                  # Bun HTTP server (REST + SSE + WebSocket)
 ├── electron-main.cjs          # Electron main process
 ├── client/                    # React + Vite frontend
@@ -208,11 +208,28 @@ cd MindAct
 ./restart.sh    # launch
 ```
 
+**Browser only (no Electron / no X11):** on a headless or SSH server, skip the desktop shell and use the web UI:
+
+```bash
+MINDACT_SKIP_ELECTRON=1 ./restart.sh
+cd client && bun run dev   # http://localhost:5173
+```
+
+**If `cli/rust/` is missing** (you cloned without submodules), fetch the Rust CLI and re-run setup:
+
+```bash
+git submodule update --init --recursive
+./setup.sh
+```
+
+The submodule is [physmind-cli-rust](https://github.com/KeploreAI-Lab/physmind-cli-rust).
+
 `setup.sh` will automatically:
 1. Install **Bun** if missing
 2. Install **Rust/Cargo** if missing
 3. `cargo build --release` the CLI (`physmind`) and link it to `/usr/local/bin`
 4. `bun install` all dependencies and build the React client
+5. On **Linux**, compile **`node-pty`** from source when the package has no linux prebuild (embedded terminal)
 
 ---
 
@@ -250,6 +267,18 @@ Open **Settings** (top bar) and enter:
 - **Vault path** — your private knowledge base folder
 - **Project path** — working project directory opened in the terminal
 - **Skills path** — folder of `.skill` files or unpacked skill directories
+
+### Development: frontend hot reload (server already on 3001)
+
+`bun run dev` at the **repo root** starts **two** processes: Bun on **3001** and Vite on **5173**. If something is already listening on 3001 (for example after `./restart.sh` or `bun run server.ts`), that command fails with `EADDRINUSE` for the server half.
+
+To **reuse the existing API** and only run the React dev server:
+
+```bash
+cd client && bun run dev
+```
+
+Then open [http://localhost:5173](http://localhost:5173). Vite proxies `/api` to `http://localhost:3001` (see `client/vite.config.ts`). The terminal WebSocket connects directly to port 3001.
 
 ---
 
@@ -353,6 +382,37 @@ The Platform KB is loaded separately from your private vault — it is read-only
 
 ---
 
+## Troubleshooting
+
+### Electron: `libatk-1.0.so.0` or other missing `.so` (Linux)
+
+Minimal servers often lack GTK/Chromium libraries Electron needs. **`./setup.sh`** and **`./restart.sh`** run `scripts/check-linux-electron.sh`, print the **exact `ldd` lines** and an **`apt-get install ...` one-liner**, and **`restart.sh` skips launching Electron** if the check fails so the failure is not silent.
+
+- **Logs:** `/tmp/mindact-electron.log` (when Electron is attempted)
+- **Manual check:** `bash scripts/check-linux-electron.sh` (the suggested `apt-get` line picks **`libasound2t64`** / **`libgtk-3-0t64`** on Ubuntu 24.04+ automatically; older releases still get **`libasound2`** / **`libgtk-3-0`**).
+- **Use the app without Electron:** **`MINDACT_SKIP_ELECTRON=1 ./restart.sh`**, or keep **3001** and run **`cd client && bun run dev`** → **http://localhost:5173** (see **Development: frontend hot reload** under *After launch* above).
+
+### Electron: `chrome-sandbox` / SUID sandbox (Linux)
+
+Chromium refuses to start if `node_modules/electron/dist/chrome-sandbox` is not **owned by root** with mode **4755** (setuid). A normal `npm`/`bun` install leaves it user-owned, which triggers a fatal error in the log.
+
+- **`./restart.sh`** detects this and sets **`MINDACT_ELECTRON_NO_SANDBOX=1`** so Electron runs with **`--no-sandbox`** (fine for local dev; weaker isolation than a proper sandbox).
+- **Stricter setup (optional):** `sudo chown root:root node_modules/electron/dist/chrome-sandbox && sudo chmod 4755 node_modules/electron/dist/chrome-sandbox` (repeat after reinstalling `electron`).
+- **Manual override:** export **`MINDACT_ELECTRON_NO_SANDBOX=1`** before launching Electron yourself.
+
+### Electron: `Missing X server or $DISPLAY` (Linux)
+
+Electron needs a **graphical display**. On SSH/headless hosts, use the **browser** instead: **`MINDACT_SKIP_ELECTRON=1 ./restart.sh`**, then **`cd client && bun run dev`** → [http://localhost:5173](http://localhost:5173).
+
+### Terminal: `[Process exited. Click Restart to reconnect.]` immediately
+
+The in-app shell runs a **Node.js** child process with **`node-pty`**. If the native addon is missing, that process exits before sending JSON to the server; **`/tmp/mindact-server.log`** shows **`[PTY] worker done, sent 0 msgs`** (and **`[PTY] worker stderr:`** lines if Node printed errors).
+
+- **Fix:** from the repo root, run **`cd node_modules/node-pty && npx --yes node-gyp@10 rebuild`** (install **`build-essential`** or your distro’s C++ toolchain first). **`./setup.sh`** runs this automatically on Linux when **`require('node-pty')`** fails after **`bun install`**.
+- **Cause:** many **`node-pty`** packages ship **darwin/win32** prebuilds only; **Linux** must build **`pty.node`** locally.
+
+---
+
 ## Running tests
 
 ```bash
@@ -370,6 +430,8 @@ bun test tests/api/          # requires running server
 |---|---|---|
 | `KPLR_KEY` | Yes | KeploreAI key (`kplr-...`). Set via Settings UI — saved to `~/.config/physmind/credentials` |
 | `CLAUDE_BIN` | No | Override path to the CLI binary (default: auto-detected from `PATH`) |
+| `MINDACT_ELECTRON_NO_SANDBOX` | No | Set to `1` on Linux to run Electron with `--no-sandbox` when `chrome-sandbox` is not root setuid. `restart.sh` sets this automatically when needed. |
+| `MINDACT_SKIP_ELECTRON` | No | Set to `1` so **`./restart.sh`** does not start Electron (browser-only: use **3001** + **`cd client && bun run dev`** on **5173**). |
 
 ---
 

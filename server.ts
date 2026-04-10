@@ -334,6 +334,18 @@ function spawnPty(ws: import("bun").ServerWebSocket<unknown>, projectPath: strin
   ptySessions.set(ws, session);
   console.log("[PTY] Worker started, pid:", worker.pid);
 
+  // PTY worker stderr → server log (e.g. uncaught errors before JSON protocol starts)
+  (async () => {
+    try {
+      for await (const chunk of worker.stderr) {
+        const text = new TextDecoder().decode(chunk).trimEnd();
+        if (text) console.error("[PTY] worker stderr:", text);
+      }
+    } catch {
+      /* ignore */
+    }
+  })();
+
   // Stream stdout (newline-delimited JSON) → WebSocket
   (async () => {
     let buf = "";
