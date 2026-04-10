@@ -108,7 +108,7 @@ export async function aiCall(opts: AiCallOptions): Promise<string> {
   const model = opts.model ?? DEFAULT_MODEL;
   const maxTokens = opts.maxTokens ?? DEFAULT_MAX_TOKENS;
 
-  if (kplrKey) {
+  if (kplrKey && !model.startsWith("claude-")) {
     const msgs: DSMessage[] = [];
     if (opts.system) msgs.push({ role: "system", content: opts.system });
     for (const m of opts.messages) msgs.push({ role: m.role, content: m.content });
@@ -135,7 +135,7 @@ export async function aiStream(opts: StreamCallOptions): Promise<void> {
   const model = opts.model ?? DEFAULT_MODEL;
   const maxTokens = opts.maxTokens ?? DEFAULT_MAX_TOKENS;
 
-  if (kplrKey) {
+  if (kplrKey && !model.startsWith("claude-")) {
     const msgs: DSMessage[] = [];
     if (opts.system) msgs.push({ role: "system", content: opts.system });
     for (const m of opts.messages) msgs.push({ role: m.role, content: m.content });
