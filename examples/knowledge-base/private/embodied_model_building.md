@@ -25,3 +25,5 @@
 
 - 轨迹与控制约束见 [[control_dynamics]] 与 [[trajectory_optimization]]
 - 数值稳定性见 [[numerical_methods_physics]]
+- 平台 VLA 架构参考见 {{VLA_Fundamentals}}
+- 动作空间接口规范见 {{Action_Space_Definition}}

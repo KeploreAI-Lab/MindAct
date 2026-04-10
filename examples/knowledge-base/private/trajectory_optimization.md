@@ -7,7 +7,7 @@
 最常见形式：
 
 $$
-\min_{x_{0:T},u_{0:T-1}} \sum_{t=0}^{T-1} \ell(x_t,u_t) + \ell_T(x_T) {{ control_theory }}
+\min_{x_{0:T},u_{0:T-1}} \sum_{t=0}^{T-1} \ell(x_t,u_t) + \ell_T(x_T)
 $$
 
 约束：动力学约束、控制边界、状态安全约束。

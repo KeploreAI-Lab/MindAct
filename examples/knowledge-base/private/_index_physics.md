@@ -20,6 +20,22 @@
 | 轨迹优化 | [[trajectory_optimization]] |
 | 单位与量纲分析 | [[units_and_dimensional_analysis]] |
 | 轨道动力学 | [[orbital_dynamics]] |
+| 具身智能建模 | [[embodied_model_building]] |
+| Sim2Real 迁移 | [[embodied_sim2real]] |
+| 医学模型构建 | [[medical_model_building]] |
+| 医学评估指标 | [[medical_evaluation_metrics]] |
+| 医学多模态融合 | [[medical_multimodal_fusion]] |
+
+## 平台文件（{{}} 链接）
+
+| 主题 | 文件 |
+|------|------|
+| VLA 基础架构 | {{VLA_Fundamentals}} |
+| 动作空间定义 | {{Action_Space_Definition}} |
+| 传感器接口规范 | {{Sensor_IO_Spec}} |
+| 安全约束 | {{Safety_Constraints}} |
+| 推理延迟预算 | {{Inference_Latency_Budget}} |
+| 训练数据管线 | {{Training_Data_Pipeline}} |
 
 ## 阅读顺序建议
 

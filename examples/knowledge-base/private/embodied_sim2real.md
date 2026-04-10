@@ -18,3 +18,5 @@ Sim2Real 目标是在仿真中训练、在真实机器人上稳定部署。
 
 - 底层动力学建模见 [[newtonian_mechanics]] / [[hamiltonian_mechanics]]
 - 控制实现见 [[control_dynamics]]
+- 部署安全约束见 {{Safety_Constraints}}
+- 传感器噪声注入参考接口见 {{Sensor_IO_Spec}}

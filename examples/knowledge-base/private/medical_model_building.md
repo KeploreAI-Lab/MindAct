@@ -25,3 +25,5 @@
 
 - 统计评估见 [[statistical_mechanics]]（概率视角）
 - 信号处理见 [[signal_and_systems]]
+- 模型评估指标见 [[medical_evaluation_metrics]]
+- 多模态融合见 [[medical_multimodal_fusion]]

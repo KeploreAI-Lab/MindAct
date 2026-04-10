@@ -33,7 +33,7 @@ base_camera:   固定于机器人底座或场景，提供全局视角
 wrist_camera:  固定于末端执行器，提供操作特写视角
 ```
 
-两路图像在时间戳上必须对齐（±5ms容差）。对齐方法见 [[Training_Data_Pipeline]] 中的同步策略。
+两路图像在时间戳上必须对齐（±5ms容差）。对齐方法见 {{Training_Data_Pipeline}} 中的同步策略。
 
 ---
 
@@ -47,7 +47,7 @@ wrist_camera:  固定于末端执行器，提供操作特写视角
 ### 末端执行器力矩传感器（可选）
 - 输出：`[Fx, Fy, Fz, Tx, Ty, Tz]`，单位 N / Nm
 - 用途：接触检测、顺应控制
-- 注意：是否使用力矩信息影响 [[Action_Space_Definition]] 中的混合控制策略
+- 注意：是否使用力矩信息影响 {{Action_Space_Definition}} 中的混合控制策略
 
 ---
 
@@ -59,7 +59,7 @@ wrist_camera:  固定于末端执行器，提供操作特写视角
                                                |
                                         [动作输出]
                                                |
-                              [安全过滤层 ← [[Safety_Constraints]]]
+                              [安全过滤层 ← {{Safety_Constraints}}]
                                                |
                                         [底层控制器]
 ```
@@ -70,14 +70,14 @@ wrist_camera:  固定于末端执行器，提供操作特写视角
 
 手眼标定（Hand-Eye Calibration）是传感器接入的前置决策依赖：
 - wrist_camera 相对于末端执行器的外参（`T_cam_to_ee`）
-- 标定方法与频率：见 [[Robot_Hardware_Config]]（private）中的具体机器人参数
+- 标定方法与频率：见 Robot_Hardware_Config（private）中的具体机器人参数
 
 ---
 
 ## 与本项目的关联依赖
 
-- [[VLA_Fundamentals]] — 模型输入格式决定图像预处理标准
-- [[Action_Space_Definition]] — 传感器帧率决定控制频率上限
-- [[Training_Data_Pipeline]] — 数据采集必须遵循此规范保证训练-推理一致性
-- [[Safety_Constraints]] — 传感器失效检测是安全层的触发条件之一
-- [[Inference_Latency_Budget]] — 图像预处理延迟是总延迟预算的组成部分
+- {{VLA_Fundamentals}} — 模型输入格式决定图像预处理标准
+- {{Action_Space_Definition}} — 传感器帧率决定控制频率上限
+- {{Training_Data_Pipeline}} — 数据采集必须遵循此规范保证训练-推理一致性
+- {{Safety_Constraints}} — 传感器失效检测是安全层的触发条件之一
+- {{Inference_Latency_Budget}} — 图像预处理延迟是总延迟预算的组成部分
