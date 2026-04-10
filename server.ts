@@ -5,7 +5,7 @@ import { homedir } from "os";
 import { buildIndex, collectMdFiles, parseLinks, BRAIN_INDEX_PATH } from "./decision_manager/build_index";
 import { analyzeDependencies } from "./decision_manager/tasks/dependency_analysis";
 import { aiCall, FAST_MODEL } from "./decision_manager/ai_client";
-import { TEMPLATE_SYSTEM, buildTemplateMessage } from "./decision_manager/prompts/dependency_analysis";
+import { getTemplateSystem, buildTemplateMessage } from "./decision_manager/prompts/dependency_analysis";
 import { createRequire } from "module";
 // node-pty must be loaded via Node's require (not Bun's) because its native
 // addon uses posix_spawnp via spawn-helper, which Bun's loader breaks.
@@ -746,11 +746,12 @@ const server = serve({
 
     // ── AI suggest template for ghost file ──────────────────────────────────
     if (url.pathname === "/api/dm/suggest-template" && req.method === "POST") {
-      const { name, currentContent } = await req.json() as { name: string; currentContent: string };
+      const { name, currentContent, lang } = await req.json() as { name: string; currentContent: string; lang?: "en" | "zh" };
+      const tmplLang = (lang === "zh" || lang === "en") ? lang : "en";
       try {
         const content = await aiCall({
-          system: TEMPLATE_SYSTEM,
-          messages: [{ role: "user", content: `${buildTemplateMessage(name, currentContent || name, name)}\n\n现有草稿（如有）：\n${currentContent}` }],
+          system: getTemplateSystem(tmplLang),
+          messages: [{ role: "user", content: `${buildTemplateMessage(name, currentContent || name, name, tmplLang)}\n\n${tmplLang === "zh" ? "现有草稿（如有）：" : "Existing draft (if any):"}\n${currentContent}` }],
           model: FAST_MODEL,
           maxTokens: 1200,
         });

@@ -12,10 +12,10 @@ import { loadVaultFiles, retrieveContext } from "../graph_retrieval";
 import { parseLinks } from "../build_index";
 import { buildSkillEnrichedPrompt, findBestSkill } from "../skill_matcher";
 import {
-  DETECT_SYSTEM, buildDetectMessage,
-  DECOMPOSE_SYSTEM, buildDecomposeMessage,
-  MATCH_SYSTEM, buildMatchMessage,
-  TEMPLATE_SYSTEM, buildTemplateMessage,
+  getDetectSystem, buildDetectMessage,
+  getDecomposeSystem, buildDecomposeMessage,
+  getMatchSystem, buildMatchMessage,
+  getTemplateSystem, buildTemplateMessage,
   computeConfidence, confidenceLevel,
   buildEnrichedPrompt,
 } from "../prompts/dependency_analysis";
@@ -157,8 +157,8 @@ export async function analyzeDependencies(params: {
 
     log(m("detecting_task"));
     const detectRaw = await aiCall({
-      system: DETECT_SYSTEM,
-      messages: [{ role: "user", content: buildDetectMessage(task) }],
+      system: getDetectSystem(lang),
+      messages: [{ role: "user", content: buildDetectMessage(task, lang) }],
       model: FAST_MODEL,
       maxTokens: 256,
       temperature: 0,
@@ -201,8 +201,8 @@ export async function analyzeDependencies(params: {
       log(m("reusing_memory", { pct: Math.round(memoryHit.similarity * 100) }));
     } else {
       const decomposeRaw = await aiCall({
-        system: DECOMPOSE_SYSTEM,
-        messages: [{ role: "user", content: buildDecomposeMessage(task, detect.domain) }],
+        system: getDecomposeSystem(lang),
+        messages: [{ role: "user", content: buildDecomposeMessage(task, detect.domain, lang) }],
         model: FAST_MODEL,
         maxTokens: 1024,
         temperature: 0,
@@ -281,8 +281,8 @@ ${hints}
     }));
 
     const matchRaw = await aiCall({
-      system: MATCH_SYSTEM,
-      messages: [{ role: "user", content: buildMatchMessage({ dependencies: effectiveDeps as any, availableFiles }) }],
+      system: getMatchSystem(lang),
+      messages: [{ role: "user", content: buildMatchMessage({ dependencies: effectiveDeps as any, availableFiles }, lang) }],
       model: FAST_MODEL,
       maxTokens: 1024,
       temperature: 0,
@@ -372,8 +372,8 @@ ${hints}
         missingDeps.map(async (name) => {
           try {
             const tmpl = await aiCall({
-              system: TEMPLATE_SYSTEM,
-              messages: [{ role: "user", content: buildTemplateMessage(name, task, detect.domain) }],
+              system: getTemplateSystem(lang),
+              messages: [{ role: "user", content: buildTemplateMessage(name, task, detect.domain, lang) }],
               model: FAST_MODEL,
               maxTokens: 800,
               temperature: 0.1,
@@ -398,7 +398,7 @@ ${hints}
       contextFiles.push({ name: file.name, source: file.source, content: file.content });
     }
 
-    const enrichedPrompt = buildEnrichedPrompt({ task, contextFiles, confidence, missingDeps });
+    const enrichedPrompt = buildEnrichedPrompt({ task, contextFiles, confidence, missingDeps, lang });
 
     const report: AnalysisReport = {
       task,

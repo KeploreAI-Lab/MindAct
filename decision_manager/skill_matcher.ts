@@ -32,7 +32,7 @@ export function findBestSkill(task: string, skillsRoot: string): SkillMatch | nu
     .map(s => ({ ...s, score: skillScore(task, taskTokens, taskNgrams, s) }))
     .sort((a, b) => b.score - a.score);
 
-  const topN = scored.filter(s => s.score >= 0.10).slice(0, 3);
+  const topN = scored.filter(s => s.score >= 0.18).slice(0, 3);
   if (topN.length === 0) return null;
 
   // Return the top match as the primary, but carry all top-N in body for prompt building
@@ -98,10 +98,29 @@ function parseSkill(raw: string, fallbackName: string): { name: string; descript
 }
 
 function extractField(frontmatter: string, key: string): string {
-  const re = new RegExp(`^${key}:\\s*(.+)$`, "mi");
-  const m = frontmatter.match(re);
-  if (!m) return "";
-  return m[1].trim().replace(/^["']|["']$/g, "");
+  // Match inline value: `key: some value`
+  const inlineRe = new RegExp(`^${key}:\\s*(.+)$`, "mi");
+  const inlineM = frontmatter.match(inlineRe);
+  if (!inlineM) return "";
+
+  const firstVal = inlineM[1].trim();
+
+  // YAML block scalar (> or |): value is on the following indented lines
+  if (firstVal === ">" || firstVal === "|") {
+    const keyLineIdx = frontmatter.indexOf(inlineM[0]);
+    const afterKey = frontmatter.slice(keyLineIdx + inlineM[0].length + 1);
+    const lines: string[] = [];
+    for (const line of afterKey.split("\n")) {
+      if (line.match(/^\s+/)) {
+        lines.push(line.trim());
+      } else {
+        break;
+      }
+    }
+    return lines.join(" ").trim();
+  }
+
+  return firstVal.replace(/^["']|["']$/g, "");
 }
 
 function skillScore(task: string, taskTokens: Set<string>, taskNgrams: Set<string>, s: SkillMeta): number {
@@ -110,18 +129,29 @@ function skillScore(task: string, taskTokens: Set<string>, taskNgrams: Set<strin
   const nameNgrams = charNgrams(s.name);
   const descNgrams = charNgrams(s.description);
 
-  const nameOverlap = overlap(taskTokens, nameTokens);
-  const descOverlap = overlap(taskTokens, descTokens);
-  const cjkName = overlap(taskNgrams, nameNgrams);
-  const cjkDesc = overlap(taskNgrams, descNgrams);
+  // Use F1-style bidirectional overlap so large skill descriptions don't inflate scores.
+  const nameOverlap = f1Overlap(taskTokens, nameTokens);
+  const descOverlap = f1Overlap(taskTokens, descTokens);
+  const cjkName = f1Overlap(taskNgrams, nameNgrams);
+  const cjkDesc = f1Overlap(taskNgrams, descNgrams);
   return 0.45 * nameOverlap + 0.35 * descOverlap + 0.1 * cjkName + 0.1 * cjkDesc;
 }
 
-function overlap(a: Set<string>, b: Set<string>): number {
+/**
+ * F1-style overlap: harmonic mean of precision and recall.
+ * Penalises both when the task has few matching tokens (low recall)
+ * and when the skill has many irrelevant tokens (low precision).
+ * This prevents skills with very long descriptions from scoring high
+ * just because they happen to contain common words.
+ */
+function f1Overlap(a: Set<string>, b: Set<string>): number {
   if (a.size === 0 || b.size === 0) return 0;
   let inter = 0;
   for (const t of a) if (b.has(t)) inter++;
-  return inter / Math.max(a.size, 1);
+  if (inter === 0) return 0;
+  const precision = inter / b.size;  // how focused the skill is on the task
+  const recall = inter / a.size;     // how much of the task the skill covers
+  return (2 * precision * recall) / (precision + recall);
 }
 
 function tokenize(text: string): Set<string> {

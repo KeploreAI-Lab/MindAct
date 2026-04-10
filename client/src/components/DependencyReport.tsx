@@ -19,9 +19,9 @@ export default function DependencyReport({ report, onExecute, onExecuteRaw, onAp
   const uiLanguage = useStore(s => s.uiLanguage);
   const [expanded, setExpanded] = useState(false);
   const levelConfig = {
-    high:   { color: "#4ec9b0", label: "High", bg: "#0a2a20" },
-    medium: { color: "#c8a45a", label: "Medium", bg: "#2a1800" },
-    low:    { color: "#e05555", label: "Low", bg: "#2a0a0a" },
+    high:   { color: "#4ec9b0", labelKey: "confidence_high" as const, bg: "#0a2a20" },
+    medium: { color: "#c8a45a", labelKey: "confidence_medium" as const, bg: "#2a1800" },
+    low:    { color: "#e05555", labelKey: "confidence_low" as const, bg: "#2a0a0a" },
   }[report.confidenceLevel];
 
   return (
@@ -54,7 +54,7 @@ export default function DependencyReport({ report, onExecute, onExecuteRaw, onAp
             padding: "1px 8px", background: levelConfig.bg,
             border: `1px solid ${levelConfig.color}66`, borderRadius: 4,
           }}>
-            {levelConfig.label}
+            {t(uiLanguage, levelConfig.labelKey)}
           </span>
         </div>
       </div>
@@ -68,14 +68,13 @@ export default function DependencyReport({ report, onExecute, onExecuteRaw, onAp
         )}
         {report.matchedSkill ? (
           <div style={{ padding: "8px 10px", background: "#0a1a20", borderRadius: 4, fontSize: 11, color: "#9dd9ff", lineHeight: 1.6 }}>
-            已匹配到可复用 Skill：<b>{report.matchedSkill.name}</b><br />
-            路径：<span style={{ color: "#7fb9de" }}>{report.matchedSkill.path}</span><br />
-            是否应用该 Skill 作为执行模板？
+            {t(uiLanguage, "report_skill_matched_detail", { name: report.matchedSkill.name })}<br />
+            {t(uiLanguage, "report_skill_path", { path: report.matchedSkill.path })}<br />
+            {t(uiLanguage, "report_skill_apply_question")}
           </div>
         ) : report.dependencies.length === 0 ? (
           <div style={{ padding: "6px 8px", background: "#1a0a00", borderRadius: 4, fontSize: 10, color: "#c8a45a" }}>
-            ⚠ Could not identify specific dependencies from this task.<br />
-            Consider adding domain knowledge to your KB, or execute directly.
+            ⚠ {t(uiLanguage, "report_no_deps_warning")}
           </div>
         ) : (
           <>
@@ -96,7 +95,7 @@ export default function DependencyReport({ report, onExecute, onExecuteRaw, onAp
                     <div style={{ fontSize: 11, color: dep.coverage === "none" ? "#e05555" : "#ccc", fontWeight: 500 }}>
                       {dep.name}
                       {dep.level === "critical" && (
-                        <span style={{ fontSize: 9, color: "#e05555", marginLeft: 6, verticalAlign: "middle" }}>required</span>
+                        <span style={{ fontSize: 9, color: "#e05555", marginLeft: 6, verticalAlign: "middle" }}>{t(uiLanguage, "report_dep_required")}</span>
                       )}
                     </div>
                     {dep.coveredBy.length > 0 && (
@@ -120,7 +119,7 @@ export default function DependencyReport({ report, onExecute, onExecuteRaw, onAp
             )}
             {report.missingDeps.length > 0 && (
               <div style={{ marginTop: 8, padding: "6px 8px", background: "#1a0808", borderRadius: 4, fontSize: 10, color: "#e05555" }}>
-                ❌ Missing: {report.missingDeps.join(", ")}
+                ❌ {t(uiLanguage, "report_missing_list", { list: report.missingDeps.join(", ") })}
               </div>
             )}
           </>
