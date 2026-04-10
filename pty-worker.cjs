@@ -68,41 +68,20 @@ function isExecutable(cmd) {
   }
 }
 
-// Resolve the CLI binary — prefer @keploreai/physmind npm package, then PHYSMIND_BIN env
-function findClaude() {
-  const isWin = process.platform === 'win32';
-  const binName = isWin ? 'physmind.cmd' : 'physmind';
-  const candidates = [
-    // Explicit override via env
-    process.env.PHYSMIND_BIN || process.env.CLAUDE_BIN,
-    // npm local install: node_modules/.bin/physmind (preferred)
-    path.join(__dirname, 'node_modules', '.bin', binName),
-    // npm package entry directly via node
-    // (fallback if .bin symlink doesn't have execute bit)
-    path.join(__dirname, 'node_modules', '@keploreai', 'physmind', 'dist', 'run.js'),
-    // System PATH
-    'physmind',
-  ].filter(Boolean);
-  for (const c of candidates) {
-    if (!c) continue;
-    // For .js entry files, check existence rather than executability
-    if (c.endsWith('.js') && fs.existsSync(c)) return c;
-    if (isExecutable(c)) return c;
-  }
-  return null;
-}
-
-// If the resolved binary is a .js file, wrap it with node
-function buildEntryCommand(bin) {
-  if (bin.endsWith('.js')) {
-    return { command: process.execPath, args: [bin] };
-  }
-  return { command: bin, args: [] };
-}
-
 function resolveEntryCommand() {
-  const bin = findClaude();
-  if (bin) return buildEntryCommand(bin);
+  // Explicit override
+  const override = process.env.PHYSMIND_BIN || process.env.CLAUDE_BIN;
+  if (override && isExecutable(override)) return { command: override, args: [] };
+
+  // Prefer @keploreai/physmind npm package resolved directly — most reliable
+  try {
+    const script = require.resolve('@keploreai/physmind/dist/run.js');
+    return { command: process.execPath, args: [script] };
+  } catch {}
+
+  // Fallback: system physmind in PATH
+  if (isExecutable('physmind')) return { command: 'physmind', args: [] };
+
   return null;
 }
 
