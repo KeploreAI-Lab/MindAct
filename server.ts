@@ -895,3 +895,39 @@ const server = serve({
 });
 
 console.log(`MindAct server running at http://localhost:${PORT}`);
+
+// Auto-update @keploreai/physmind on startup (non-blocking)
+(async () => {
+  try {
+    const res = await fetch("https://registry.npmjs.org/@keploreai/physmind/latest");
+    if (!res.ok) return;
+    const data = await res.json() as { version: string };
+    const latestVersion = data.version;
+
+    // Get currently installed version from local node_modules
+    let installedVersion: string | null = null;
+    try {
+      const pkgPath = join(import.meta.dir, "node_modules", "@keploreai", "physmind", "package.json");
+      const pkg = JSON.parse(readFileSync(pkgPath, "utf-8"));
+      installedVersion = pkg.version;
+    } catch { /* not installed locally */ }
+
+    if (installedVersion === latestVersion) {
+      console.log(`[physmind] Up to date: ${latestVersion}`);
+      return;
+    }
+
+    console.log(`[physmind] ${installedVersion ? `Updating ${installedVersion} →` : "Installing"} ${latestVersion}...`);
+    const proc = Bun.spawnSync(
+      ["npm", "install", `@keploreai/physmind@${latestVersion}`],
+      { cwd: import.meta.dir, stdout: "inherit", stderr: "inherit" }
+    );
+    if (proc.exitCode === 0) {
+      console.log(`[physmind] Updated to ${latestVersion} ✓`);
+    } else {
+      console.error(`[physmind] Update failed (exit ${proc.exitCode})`);
+    }
+  } catch {
+    // Network unavailable or registry error, silently skip
+  }
+})();
