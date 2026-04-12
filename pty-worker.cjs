@@ -109,21 +109,45 @@ function readKplrKey() {
   return null;
 }
 
-// Build the environment: strip Anthropic credentials, inject KPLR/DashScope keys.
+// Read Minimax key from the credentials file.
+function readMinimaxKey() {
+  try {
+    const credFile = path.join(physmindConfigDir(), 'credentials');
+    if (!fs.existsSync(credFile)) return null;
+    const lines = fs.readFileSync(credFile, 'utf-8').split('\n');
+    for (const line of lines) {
+      const m = line.match(/^MINIMAX_KEY="?([^"]+)"?/);
+      if (m) return m[1].trim();
+    }
+  } catch {}
+  return null;
+}
+
+// Build the environment: strip Anthropic credentials, inject KPLR/DashScope or Minimax keys.
 function buildClawEnv() {
   const env = { ...process.env };
   delete env.ANTHROPIC_API_KEY;
   delete env.ANTHROPIC_AUTH_TOKEN;
+  const minimaxKey = readMinimaxKey() || env.MINIMAX_API_KEY;
   const kplrKey = readKplrKey() || env.KPLR_KEY;
-  if (kplrKey) {
+  if (minimaxKey) {
+    env.MINIMAX_API_KEY = minimaxKey;
+    env.ANTHROPIC_API_KEY = minimaxKey;
+    env.ANTHROPIC_BASE_URL = 'https://api.minimax.chat/v1';
+    delete env.KPLR_KEY;
+    delete env.DASHSCOPE_API_KEY;
+    delete env.DASHSCOPE_BASE_URL;
+  } else if (kplrKey) {
     env.KPLR_KEY = kplrKey;
     env.DASHSCOPE_API_KEY = kplrKey;
+    // Always inject proxy URL so physmind routes to KeploreAI
+    env.DASHSCOPE_BASE_URL = 'https://physmind-proxy.marvin-gao-cs.workers.dev/v1';
+    delete env.MINIMAX_API_KEY;
   } else {
     delete env.DASHSCOPE_API_KEY;
     delete env.KPLR_KEY;
+    delete env.MINIMAX_API_KEY;
   }
-  // Always inject proxy URL so physmind routes to KeploreAI
-  env.DASHSCOPE_BASE_URL = 'https://physmind-proxy.marvin-gao-cs.workers.dev/v1';
   // Isolate physmind config so saved Anthropic OAuth tokens are never read
   env.CLAW_CONFIG_HOME = path.join(physmindConfigDir(), 'claw');
   if (process.platform !== 'win32') {
@@ -134,7 +158,7 @@ function buildClawEnv() {
 }
 
 function hasKplrKey() {
-  return !!(readKplrKey() || process.env.KPLR_KEY);
+  return !!(readKplrKey() || process.env.KPLR_KEY || readMinimaxKey() || process.env.MINIMAX_API_KEY);
 }
 
 let term = null;
@@ -151,8 +175,8 @@ function spawnTerm(cols, rows) {
   if (!hasKplrKey()) {
     send({
       type: 'data',
-      data: '\r\n\x1b[31m[PhysMind] No KeploreAI key found.\x1b[0m\r\n' +
-            '\x1b[90mGo to Settings and enter your kplr-... key to get started.\x1b[0m\r\n\r\n',
+      data: '\r\n\x1b[31m[PhysMind] No API key found.\x1b[0m\r\n' +
+            '\x1b[90mGo to Settings and enter your KeploreAI (kplr-...) or Minimax API key to get started.\x1b[0m\r\n\r\n',
     });
     return;
   }
