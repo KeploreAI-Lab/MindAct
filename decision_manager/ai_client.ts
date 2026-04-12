@@ -1,7 +1,7 @@
 /**
  * Thin wrapper around AI APIs.
- * Prefers KeploreAI (DashScope-compatible) when a kplr-... key is found in
- * ~/.config/physmind/credentials; falls back to Anthropic SDK otherwise.
+ * Prefers MiniMax when a MINIMAX_KEY is found, then KeploreAI (DashScope-compatible)
+ * when a kplr-... key is found, falls back to Anthropic SDK otherwise.
  */
 
 import Anthropic from "@anthropic-ai/sdk";
@@ -17,6 +17,23 @@ export const DEFAULT_MAX_TOKENS = 4096;
 const KPLR_BASE_URL = "https://physmind-proxy.marvin-gao-cs.workers.dev/v1";
 const DASHSCOPE_DEFAULT_MODEL = "qwen3.6-plus";
 const DASHSCOPE_FAST_MODEL = "qwen3.6-plus";
+
+// MiniMax API (Anthropic-compatible)
+const MINIMAX_BASE_URL = "https://api.minimax.chat/v1";
+const MINIMAX_DEFAULT_MODEL = "MiniMax-M2.7";
+const MINIMAX_FAST_MODEL = "MiniMax-M2.7";
+
+function readMinimaxKey(): string | null {
+  const credFile = join(homedir(), ".config", "physmind", "credentials");
+  if (!existsSync(credFile)) return null;
+  try {
+    for (const line of readFileSync(credFile, "utf-8").split("\n")) {
+      const m = line.match(/^MINIMAX_KEY="?([^"]+)"?/);
+      if (m) return m[1].trim();
+    }
+  } catch {}
+  return null;
+}
 
 function readKplrKey(): string | null {
   const credFile = join(homedir(), ".config", "physmind", "credentials");
@@ -80,7 +97,13 @@ async function dsStream(apiKey: string, model: string, messages: DSMessage[], ma
   onDone?.(full);
 }
 
-// ── Anthropic fallback ───────────────────────────────────────────────────────
+// ── Anthropic clients ────────────────────────────────────────────────────────
+
+let _minimaxClient: Anthropic | null = null;
+function getMinimaxClient(apiKey: string): Anthropic {
+  if (!_minimaxClient) _minimaxClient = new Anthropic({ apiKey, baseURL: MINIMAX_BASE_URL });
+  return _minimaxClient;
+}
 
 let _client: Anthropic | null = null;
 function getAnthropicClient(): Anthropic {
@@ -89,6 +112,10 @@ function getAnthropicClient(): Anthropic {
   if (!apiKey) throw new Error("ANTHROPIC_API_KEY is not set");
   _client = new Anthropic({ apiKey });
   return _client;
+}
+
+function toMinimaxModel(model: string): string {
+  return model === FAST_MODEL ? MINIMAX_FAST_MODEL : MINIMAX_DEFAULT_MODEL;
 }
 
 // ── Public API ───────────────────────────────────────────────────────────────
@@ -104,9 +131,21 @@ export interface AiCallOptions {
 }
 
 export async function aiCall(opts: AiCallOptions): Promise<string> {
+  const minimaxKey = readMinimaxKey() ?? process.env.MINIMAX_KEY;
   const kplrKey = readKplrKey() ?? process.env.KPLR_KEY;
   const model = opts.model ?? DEFAULT_MODEL;
   const maxTokens = opts.maxTokens ?? DEFAULT_MAX_TOKENS;
+
+  if (minimaxKey) {
+    const client = getMinimaxClient(minimaxKey);
+    const response = await client.messages.create({
+      model: toMinimaxModel(model), max_tokens: maxTokens, temperature: opts.temperature,
+      system: opts.system, messages: opts.messages,
+    });
+    const block = response.content[0];
+    if (block.type !== "text") throw new Error("Unexpected response type: " + block.type);
+    return block.text;
+  }
 
   if (kplrKey && !model.startsWith("claude-")) {
     const msgs: DSMessage[] = [];
@@ -131,9 +170,27 @@ export interface StreamCallOptions extends AiCallOptions {
 }
 
 export async function aiStream(opts: StreamCallOptions): Promise<void> {
+  const minimaxKey = readMinimaxKey() ?? process.env.MINIMAX_KEY;
   const kplrKey = readKplrKey() ?? process.env.KPLR_KEY;
   const model = opts.model ?? DEFAULT_MODEL;
   const maxTokens = opts.maxTokens ?? DEFAULT_MAX_TOKENS;
+
+  if (minimaxKey) {
+    const client = getMinimaxClient(minimaxKey);
+    let fullText = "";
+    const stream = await client.messages.stream({
+      model: toMinimaxModel(model), max_tokens: maxTokens, temperature: opts.temperature,
+      system: opts.system, messages: opts.messages,
+    });
+    for await (const event of stream) {
+      if (event.type === "content_block_delta" && event.delta.type === "text_delta") {
+        fullText += event.delta.text;
+        opts.onChunk(event.delta.text);
+      }
+    }
+    opts.onDone?.(fullText);
+    return;
+  }
 
   if (kplrKey && !model.startsWith("claude-")) {
     const msgs: DSMessage[] = [];

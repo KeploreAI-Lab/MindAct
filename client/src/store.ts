@@ -10,6 +10,7 @@ export interface Config {
   skills_path: string;
   panel_ratio: number;
   kplr_token?: string;
+  minimax_token?: string;
 }
 
 export interface TreeNode {

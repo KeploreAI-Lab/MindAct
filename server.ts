@@ -174,7 +174,12 @@ function saveKplrCredentials(key: string) {
   const credDir = join(homedir(), ".config", "physmind");
   const credFile = join(credDir, "credentials");
   if (!existsSync(credDir)) mkdirSync(credDir, { recursive: true });
-  writeFileSync(credFile, `KPLR_KEY="${key}"\n`);
+  // Preserve existing lines other than KPLR_KEY
+  let existing = "";
+  try { existing = existsSync(credFile) ? readFileSync(credFile, "utf-8") : ""; } catch {}
+  const lines = existing.split("\n").filter(l => !l.startsWith("KPLR_KEY=") && l.trim() !== "");
+  lines.push(`KPLR_KEY="${key}"`);
+  writeFileSync(credFile, lines.join("\n") + "\n");
 }
 
 function readKplrCredentials(): string | null {
@@ -184,6 +189,30 @@ function readKplrCredentials(): string | null {
     const lines = readFileSync(credFile, "utf-8").split("\n");
     for (const line of lines) {
       const m = line.match(/^KPLR_KEY="?([^"]+)"?/);
+      if (m) return m[1].trim();
+    }
+  } catch {}
+  return null;
+}
+
+function saveMinimaxCredentials(key: string) {
+  const credDir = join(homedir(), ".config", "physmind");
+  const credFile = join(credDir, "credentials");
+  if (!existsSync(credDir)) mkdirSync(credDir, { recursive: true });
+  let existing = "";
+  try { existing = existsSync(credFile) ? readFileSync(credFile, "utf-8") : ""; } catch {}
+  const lines = existing.split("\n").filter(l => !l.startsWith("MINIMAX_KEY=") && l.trim() !== "");
+  lines.push(`MINIMAX_KEY="${key}"`);
+  writeFileSync(credFile, lines.join("\n") + "\n");
+}
+
+function readMinimaxCredentials(): string | null {
+  const credFile = join(homedir(), ".config", "physmind", "credentials");
+  if (!existsSync(credFile)) return null;
+  try {
+    const lines = readFileSync(credFile, "utf-8").split("\n");
+    for (const line of lines) {
+      const m = line.match(/^MINIMAX_KEY="?([^"]+)"?/);
       if (m) return m[1].trim();
     }
   } catch {}
@@ -403,13 +432,17 @@ const server = serve({
       if (req.method === "GET") {
         const config = readConfig();
         const kplr_token = readKplrCredentials();
-        return jsonResponse(config ? { ...config, kplr_token } : null);
+        const minimax_token = readMinimaxCredentials();
+        return jsonResponse(config ? { ...config, kplr_token, minimax_token } : null);
       }
       if (req.method === "POST") {
-        return req.json().then((body: Config & { kplr_token?: string }) => {
-          // Save key first, independently of path config validation
+        return req.json().then((body: Config & { kplr_token?: string; minimax_token?: string }) => {
+          // Save keys first, independently of path config validation
           if (body.kplr_token?.startsWith("kplr-")) {
             saveKplrCredentials(body.kplr_token);
+          }
+          if (body.minimax_token) {
+            saveMinimaxCredentials(body.minimax_token);
           }
           const normalized = normalizeConfig(body);
           if (normalized) writeConfig(normalized);
