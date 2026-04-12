@@ -181,6 +181,15 @@ function spawnTerm(cols, rows) {
     return;
   }
 
+  // Show which backend is active
+  const minimaxKey = readMinimaxKey() || process.env.MINIMAX_API_KEY;
+  const kplrKey = readKplrKey() || process.env.KPLR_KEY;
+  if (minimaxKey) {
+    send({ type: 'data', data: '\r\n\x1b[32m[PhysMind] Backend: MiniMax M2.7\x1b[0m\r\n\r\n' });
+  } else if (kplrKey) {
+    send({ type: 'data', data: '\r\n\x1b[32m[PhysMind] Backend: KeploreAI (qwen3.6-plus)\x1b[0m\r\n\r\n' });
+  }
+
   const entry = resolveEntryCommand();
   if (!entry) {
     send({
