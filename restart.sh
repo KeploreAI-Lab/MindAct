@@ -31,19 +31,7 @@ cd client && "$BUN_CMD" run build 2>&1 | tail -3 && cd ..
 
 # ── Start server ──────────────────────────────────────────────
 echo "🚀  Starting server..."
-# Resolve CLI binary: prefer project-local build, fall back to ~/claw-code
-if [ -z "${CLAUDE_BIN:-}" ]; then
-  for _candidate in \
-      "$(pwd)/cli/rust/target/release/physmind" \
-      "$HOME/claw-code/rust/target/release/claw" \
-      "$HOME/claw-code/rust/target/release/physmind"; do
-    if [ -x "$_candidate" ]; then
-      CLAUDE_BIN="$_candidate"
-      break
-    fi
-  done
-fi
-export CLAUDE_BIN
+# CLI binary is resolved by pty-worker.cjs via @keploreai/physmind npm package
 "$BUN_CMD" run server.ts > /tmp/mindact-server.log 2>&1 &
 SERVER_PID=$!
 

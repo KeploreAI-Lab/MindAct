@@ -147,6 +147,9 @@ function Terminal() {
               setGhostNodes(gh.nodes);
             } else if (event.type === "report") {
               setAnalysisReport(event.data as AnalysisReport);
+            } else if (event.type === "file_progress") {
+              const fp = event.data as { current: number; total: number; fileName: string };
+              useStore.getState().setAnalysisProgress(fp);
             }
           } catch {}
         }
@@ -159,6 +162,7 @@ function Terminal() {
       }
     } finally {
       setAnalysisRunning(false);
+      useStore.getState().setAnalysisProgress(null);
     }
   }, []);
 

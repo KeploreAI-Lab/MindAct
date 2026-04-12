@@ -21,7 +21,7 @@
 
 </div>
 
-> **From ReAct to MindAct.** [ReAct](https://arxiv.org/abs/2210.03629) (Reasoning + Acting) is the standard paradigm behind most AI agents — interleaving chain-of-thought reasoning with tool use. MindAct takes it further: before your agent acts, it checks what it knows, what it doesn't, and how confident it should be.
+> **From ReAct to MindAct.** [ReAct](https://arxiv.org/abs/2210.03629) (Reasoning + Acting) is the standard paradigm behind most AI agents — interleaving chain-of-thought reasoning with tool use. MindAct takes it further: before your agent acts, it checks what it knows, what it doesn't, and how confident it should be. [This version supports the Minmax backend]
 
 **MindAct** is a desktop AI workspace that combines a Claude Code terminal, a built-in Obsidian-style knowledge graph, and an intelligent Dependency Analysis engine — purpose-built for engineers working on domain-specific projects like robotics, physics simulation, and control systems.
 

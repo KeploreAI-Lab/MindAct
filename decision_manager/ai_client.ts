@@ -15,8 +15,8 @@ export const DEFAULT_MAX_TOKENS = 4096;
 
 // KeploreAI proxy — same endpoint the CLI uses (pty-worker.cjs DASHSCOPE_BASE_URL)
 const KPLR_BASE_URL = "https://physmind-proxy.marvin-gao-cs.workers.dev/v1";
-const DASHSCOPE_DEFAULT_MODEL = "qwen-plus";
-const DASHSCOPE_FAST_MODEL = "qwen-plus";
+const DASHSCOPE_DEFAULT_MODEL = "qwen3.6-plus";
+const DASHSCOPE_FAST_MODEL = "qwen3.6-plus";
 
 function readKplrKey(): string | null {
   const credFile = join(homedir(), ".config", "physmind", "credentials");
@@ -108,7 +108,7 @@ export async function aiCall(opts: AiCallOptions): Promise<string> {
   const model = opts.model ?? DEFAULT_MODEL;
   const maxTokens = opts.maxTokens ?? DEFAULT_MAX_TOKENS;
 
-  if (kplrKey) {
+  if (kplrKey && !model.startsWith("claude-")) {
     const msgs: DSMessage[] = [];
     if (opts.system) msgs.push({ role: "system", content: opts.system });
     for (const m of opts.messages) msgs.push({ role: m.role, content: m.content });
@@ -135,7 +135,7 @@ export async function aiStream(opts: StreamCallOptions): Promise<void> {
   const model = opts.model ?? DEFAULT_MODEL;
   const maxTokens = opts.maxTokens ?? DEFAULT_MAX_TOKENS;
 
-  if (kplrKey) {
+  if (kplrKey && !model.startsWith("claude-")) {
     const msgs: DSMessage[] = [];
     if (opts.system) msgs.push({ role: "system", content: opts.system });
     for (const m of opts.messages) msgs.push({ role: m.role, content: m.content });

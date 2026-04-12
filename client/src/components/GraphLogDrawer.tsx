@@ -7,6 +7,7 @@ export default function GraphLogDrawer() {
   const logDrawerOpen = useStore(s => s.logDrawerOpen);
   const setLogDrawerOpen = useStore(s => s.setLogDrawerOpen);
   const analysisRunning = useStore(s => s.analysisRunning);
+  const analysisProgress = useStore(s => s.analysisProgress);
   const ghostNodes = useStore(s => s.ghostNodes);
   const config = useStore(s => s.config);
   const uiLanguage = useStore(s => s.uiLanguage);
@@ -28,6 +29,44 @@ export default function GraphLogDrawer() {
       alignItems: "stretch",
       pointerEvents: "none",
     }}>
+      {/* Progress bar — always visible during analysis, outside the collapsible drawer */}
+      {analysisRunning && (
+        <div style={{
+          background: "rgba(10, 10, 20, 0.82)",
+          backdropFilter: "blur(8px)",
+          border: "1px solid #2a2a3a",
+          borderRadius: 8,
+          padding: "6px 10px",
+          marginBottom: 4,
+          pointerEvents: "none",
+        }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: analysisProgress ? 5 : 0 }}>
+            <span style={{
+              width: 5, height: 5, borderRadius: "50%",
+              background: "#c8a45a",
+              animation: "pulse 1s infinite",
+              flexShrink: 0,
+            }} />
+            <span style={{ fontSize: 9, color: "#888", textTransform: "uppercase", letterSpacing: 1 }}>
+              {analysisProgress
+                ? `${analysisProgress.current}/${analysisProgress.total} · ${analysisProgress.fileName}`
+                : t(uiLanguage, "analysis_log")}
+            </span>
+          </div>
+          {analysisProgress && (
+            <div style={{ height: 3, background: "#1e1e2e", borderRadius: 2, overflow: "hidden" }}>
+              <div style={{
+                height: "100%",
+                width: `${Math.round((analysisProgress.current / analysisProgress.total) * 100)}%`,
+                background: "#c8a45a",
+                transition: "width 0.15s ease",
+                borderRadius: 2,
+              }} />
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Log panel — slides down/up */}
       <div style={{
         background: "rgba(10, 10, 20, 0.82)",
@@ -51,14 +90,6 @@ export default function GraphLogDrawer() {
           gap: 6,
           flexShrink: 0,
         }}>
-          {analysisRunning && (
-            <span style={{
-              width: 5, height: 5, borderRadius: "50%",
-              background: "#c8a45a",
-              animation: "pulse 1s infinite",
-              flexShrink: 0,
-            }} />
-          )}
           <span style={{ fontSize: 9, color: "#444", textTransform: "uppercase", letterSpacing: 1 }}>
             {t(uiLanguage, "analysis_log")}
           </span>

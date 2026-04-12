@@ -8,3 +8,6 @@ skills-test/
 my_project/
 knowledge_base/
 scripts/
+.DS_Store
+**/.DS_Store
+.claw/

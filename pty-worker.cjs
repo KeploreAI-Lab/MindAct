@@ -68,46 +68,37 @@ function isExecutable(cmd) {
   }
 }
 
-// Resolve the CLI binary — prefer project-local physmind, then CLAUDE_BIN env
-function findClaude() {
-  const os = require('os');
-  const isWin = process.platform === 'win32';
-  const bin = isWin ? 'physmind.exe' : 'physmind';
-  const candidates = [
-    // Explicit override via env
-    process.env.CLAUDE_BIN,
-    // setup.ps1 copies physmind.exe here
-    isWin ? path.join(os.homedir(), '.cargo', 'bin', 'physmind.exe') : null,
-    // setup.sh links physmind here
-    isWin ? null : '/usr/local/bin/physmind',
-    // Project-local build
-    path.join(__dirname, 'cli', 'rust', 'target', 'release', bin),
-    // x64 cross-compiled target (ARM64 Windows)
-    isWin ? path.join(__dirname, 'cli', 'rust', 'target', 'x86_64-pc-windows-msvc', 'release', 'physmind.exe') : null,
-    // Dev machine claw-code checkout
-    path.join(os.homedir(), 'claw-code', 'rust', 'target', 'release', bin),
-    // System PATH
-    'physmind',
-  ].filter(Boolean);
-  for (const c of candidates) {
-    if (!c) continue;
-    if (isExecutable(c)) return c;
-  }
-  return null;
-}
-
 function resolveEntryCommand() {
-  const claudeBin = findClaude();
-  if (claudeBin) {
-    return { command: claudeBin, args: [] };
-  }
+  // Explicit override
+  const override = process.env.PHYSMIND_BIN || process.env.CLAUDE_BIN;
+  if (override && isExecutable(override)) return { command: override, args: [] };
+
+  // Prefer @keploreai/physmind npm package resolved directly — most reliable
+  try {
+    const script = require.resolve('@keploreai/physmind/dist/run.js');
+    return { command: process.execPath, args: [script] };
+  } catch {}
+
+  // Fallback: system physmind in PATH
+  if (isExecutable('physmind')) return { command: 'physmind', args: [] };
+
   return null;
 }
 
-// Read kplr key from ~/.config/physmind/credentials (same file claw writes to).
+// Cross-platform credentials directory:
+//   macOS/Linux: ~/.config/physmind
+//   Windows:     %APPDATA%\physmind
+function physmindConfigDir() {
+  if (process.platform === 'win32') {
+    return path.join(process.env.APPDATA || require('os').homedir(), 'physmind');
+  }
+  return path.join(require('os').homedir(), '.config', 'physmind');
+}
+
+// Read kplr key from the credentials file.
 function readKplrKey() {
   try {
-    const credFile = path.join(require('os').homedir(), '.config', 'physmind', 'credentials');
+    const credFile = path.join(physmindConfigDir(), 'credentials');
     if (!fs.existsSync(credFile)) return null;
     const lines = fs.readFileSync(credFile, 'utf-8').split('\n');
     for (const line of lines) {
@@ -118,33 +109,56 @@ function readKplrKey() {
   return null;
 }
 
-// Build the environment for claw: strip ANTHROPIC_API_KEY so claw doesn't
-// fall back to Claude, and inject KPLR_KEY + DASHSCOPE_API_KEY from the
-// credentials file so claw works in non-interactive PTY mode.
+// Read Minimax key from the credentials file.
+function readMinimaxKey() {
+  try {
+    const credFile = path.join(physmindConfigDir(), 'credentials');
+    if (!fs.existsSync(credFile)) return null;
+    const lines = fs.readFileSync(credFile, 'utf-8').split('\n');
+    for (const line of lines) {
+      const m = line.match(/^MINIMAX_KEY="?([^"]+)"?/);
+      if (m) return m[1].trim();
+    }
+  } catch {}
+  return null;
+}
+
+// Build the environment: strip Anthropic credentials, inject KPLR/DashScope or Minimax keys.
 function buildClawEnv() {
   const env = { ...process.env };
   delete env.ANTHROPIC_API_KEY;
   delete env.ANTHROPIC_AUTH_TOKEN;
+  const minimaxKey = readMinimaxKey() || env.MINIMAX_API_KEY;
   const kplrKey = readKplrKey() || env.KPLR_KEY;
-  if (kplrKey) {
+  if (minimaxKey) {
+    env.MINIMAX_API_KEY = minimaxKey;
+    env.ANTHROPIC_API_KEY = minimaxKey;
+    env.ANTHROPIC_BASE_URL = 'https://api.minimax.chat/v1';
+    delete env.KPLR_KEY;
+    delete env.DASHSCOPE_API_KEY;
+    delete env.DASHSCOPE_BASE_URL;
+  } else if (kplrKey) {
     env.KPLR_KEY = kplrKey;
     env.DASHSCOPE_API_KEY = kplrKey;
+    // Always inject proxy URL so physmind routes to KeploreAI
+    env.DASHSCOPE_BASE_URL = 'https://physmind-proxy.marvin-gao-cs.workers.dev/v1';
+    delete env.MINIMAX_API_KEY;
   } else {
     delete env.DASHSCOPE_API_KEY;
     delete env.KPLR_KEY;
+    delete env.MINIMAX_API_KEY;
   }
-  // Always inject proxy URL so claw routes to KeploreAI regardless of local shell config
-  env.DASHSCOPE_BASE_URL = 'https://physmind-proxy.marvin-gao-cs.workers.dev/v1';
-  // Point claw at a MindAct-specific config dir so ~/.claw/credentials.json
-  // (which may contain a saved Anthropic OAuth token) is never read.
-  env.CLAW_CONFIG_HOME = path.join(require('os').homedir(), '.config', 'physmind', 'claw');
-  env.TERM = 'xterm-256color';
-  env.COLORTERM = 'truecolor';
+  // Isolate physmind config so saved Anthropic OAuth tokens are never read
+  env.CLAW_CONFIG_HOME = path.join(physmindConfigDir(), 'claw');
+  if (process.platform !== 'win32') {
+    env.TERM = 'xterm-256color';
+    env.COLORTERM = 'truecolor';
+  }
   return env;
 }
 
 function hasKplrKey() {
-  return !!(readKplrKey() || process.env.KPLR_KEY);
+  return !!(readKplrKey() || process.env.KPLR_KEY || readMinimaxKey() || process.env.MINIMAX_API_KEY);
 }
 
 let term = null;
@@ -161,8 +175,8 @@ function spawnTerm(cols, rows) {
   if (!hasKplrKey()) {
     send({
       type: 'data',
-      data: '\r\n\x1b[31m[PhysMind] No KeploreAI key found.\x1b[0m\r\n' +
-            '\x1b[90mGo to Settings and enter your kplr-... key to get started.\x1b[0m\r\n\r\n',
+      data: '\r\n\x1b[31m[PhysMind] No API key found.\x1b[0m\r\n' +
+            '\x1b[90mGo to Settings and enter your KeploreAI (kplr-...) or Minimax API key to get started.\x1b[0m\r\n\r\n',
     });
     return;
   }
@@ -172,8 +186,8 @@ function spawnTerm(cols, rows) {
     send({
       type: 'data',
       data:
-        '\r\n\x1b[31m[MindAct] Claude CLI not found.\x1b[0m\r\n' +
-        '\x1b[90mInstall: npm install -g @anthropic-ai/claude-code\x1b[0m\r\n\r\n',
+        '\r\n\x1b[31m[MindAct] PhysMind CLI not found.\x1b[0m\r\n' +
+        '\x1b[90mRun: npm install  (installs @keploreai/physmind automatically)\x1b[0m\r\n\r\n',
     });
     send({ type: 'exit' });
     process.exit(1);

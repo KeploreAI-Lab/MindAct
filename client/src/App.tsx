@@ -302,16 +302,19 @@ function SettingsForm({ config, onSave }: { config: import("./store").Config; on
   const [skills, setSkills] = useState(config.skills_path);
   const [token, setToken] = useState(config.kplr_token ?? "");
   const [showToken, setShowToken] = useState(false);
+  const [minimaxToken, setMinimaxToken] = useState(config.minimax_token ?? "");
+  const [showMinimaxToken, setShowMinimaxToken] = useState(false);
 
   React.useEffect(() => {
     setVault(config.vault_path);
     setProject(config.project_path);
     setSkills(config.skills_path);
     setToken(config.kplr_token ?? "");
+    setMinimaxToken(config.minimax_token ?? "");
   }, [config]);
 
   const save = () => {
-    const c: import("./store").Config = { vault_path: vault, project_path: project, skills_path: skills, panel_ratio: config.panel_ratio, kplr_token: token || undefined };
+    const c: import("./store").Config = { vault_path: vault, project_path: project, skills_path: skills, panel_ratio: config.panel_ratio, kplr_token: token || undefined, minimax_token: minimaxToken || undefined };
     const body: Record<string, unknown> = { ...c };
     fetch("/api/config", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) })
       .then(async (res) => {
@@ -343,6 +346,19 @@ function SettingsForm({ config, onSave }: { config: import("./store").Config; on
         />
         <button onClick={() => setShowToken(v => !v)} style={{ position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", color: "#666", cursor: "pointer", fontSize: 11 }}>
           {showToken ? "Hide" : "Show"}
+        </button>
+      </div>
+      <label style={{ color: "#888", fontSize: 11 }}>Minimax API Key</label>
+      <div style={{ position: "relative" }}>
+        <input
+          type={showMinimaxToken ? "text" : "password"}
+          value={minimaxToken}
+          onChange={e => setMinimaxToken(e.target.value)}
+          placeholder="Enter Minimax API key"
+          style={{ ...inputStyle, paddingRight: 60 }}
+        />
+        <button onClick={() => setShowMinimaxToken(v => !v)} style={{ position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", color: "#666", cursor: "pointer", fontSize: 11 }}>
+          {showMinimaxToken ? "Hide" : "Show"}
         </button>
       </div>
       <button onClick={save} style={{ ...btnStyle(true), alignSelf: "flex-end", marginTop: 8 }}>{t(uiLanguage, "save")}</button>
