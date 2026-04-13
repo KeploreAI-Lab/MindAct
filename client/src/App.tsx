@@ -300,8 +300,6 @@ function SettingsForm({ config, onSave }: { config: import("./store").Config; on
   const [vault, setVault] = useState(config.vault_path);
   const [project, setProject] = useState(config.project_path);
   const [skills, setSkills] = useState(config.skills_path);
-  const [token, setToken] = useState(config.kplr_token ?? "");
-  const [showToken, setShowToken] = useState(false);
   const [minimaxToken, setMinimaxToken] = useState(config.minimax_token ?? "");
   const [showMinimaxToken, setShowMinimaxToken] = useState(false);
 
@@ -309,12 +307,11 @@ function SettingsForm({ config, onSave }: { config: import("./store").Config; on
     setVault(config.vault_path);
     setProject(config.project_path);
     setSkills(config.skills_path);
-    setToken(config.kplr_token ?? "");
     setMinimaxToken(config.minimax_token ?? "");
   }, [config]);
 
   const save = () => {
-    const c: import("./store").Config = { vault_path: vault, project_path: project, skills_path: skills, panel_ratio: config.panel_ratio, kplr_token: token || undefined, minimax_token: minimaxToken || undefined };
+    const c: import("./store").Config = { vault_path: vault, project_path: project, skills_path: skills, panel_ratio: config.panel_ratio, minimax_token: minimaxToken || undefined };
     const body: Record<string, unknown> = { ...c };
     fetch("/api/config", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) })
       .then(async (res) => {
@@ -335,20 +332,7 @@ function SettingsForm({ config, onSave }: { config: import("./store").Config; on
       <input value={project} onChange={e => setProject(e.target.value)} style={inputStyle} />
       <label style={{ color: "#888", fontSize: 11 }}>Skills Path</label>
       <input value={skills} onChange={e => setSkills(e.target.value)} style={inputStyle} />
-      <label style={{ color: "#888", fontSize: 11 }}>PhysMind Key (kplr-...)</label>
-      <div style={{ position: "relative" }}>
-        <input
-          type={showToken ? "text" : "password"}
-          value={token}
-          onChange={e => setToken(e.target.value)}
-          placeholder="kplr-xxxxxxxxxxxx"
-          style={{ ...inputStyle, paddingRight: 60 }}
-        />
-        <button onClick={() => setShowToken(v => !v)} style={{ position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", color: "#666", cursor: "pointer", fontSize: 11 }}>
-          {showToken ? "Hide" : "Show"}
-        </button>
-      </div>
-      <label style={{ color: "#888", fontSize: 11 }}>Minimax API Key</label>
+      <label style={{ color: "#888", fontSize: 11 }}>MiniMax API Key (sk-api-...)</label>
       <div style={{ position: "relative" }}>
         <input
           type={showMinimaxToken ? "text" : "password"}

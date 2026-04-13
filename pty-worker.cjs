@@ -175,19 +175,18 @@ function spawnTerm(cols, rows) {
   if (!hasKplrKey()) {
     send({
       type: 'data',
-      data: '\r\n\x1b[31m[PhysMind] No API key found.\x1b[0m\r\n' +
-            '\x1b[90mGo to Settings and enter your KeploreAI (kplr-...) or Minimax API key to get started.\x1b[0m\r\n\r\n',
+      data: '\r\n\x1b[31m[PhysMind] No MiniMax API key found.\x1b[0m\r\n' +
+            '\x1b[90mOption 1: Go to Settings and enter your MiniMax API key (sk-api-...).\x1b[0m\r\n' +
+            '\x1b[90mOption 2: Add it manually to ~/.config/physmind/credentials:\x1b[0m\r\n' +
+            '\x1b[90m  MINIMAX_KEY="sk-api-..."\x1b[0m\r\n\r\n',
     });
     return;
   }
 
   // Show which backend is active
   const minimaxKey = readMinimaxKey() || process.env.MINIMAX_API_KEY;
-  const kplrKey = readKplrKey() || process.env.KPLR_KEY;
   if (minimaxKey) {
     send({ type: 'data', data: '\r\n\x1b[32m[PhysMind] Backend: MiniMax M2.7\x1b[0m\r\n\r\n' });
-  } else if (kplrKey) {
-    send({ type: 'data', data: '\r\n\x1b[32m[PhysMind] Backend: KeploreAI (qwen3.6-plus)\x1b[0m\r\n\r\n' });
   }
 
   const entry = resolveEntryCommand();
