@@ -133,7 +133,7 @@ function buildClawEnv() {
   if (minimaxKey) {
     env.MINIMAX_API_KEY = minimaxKey;
     env.ANTHROPIC_API_KEY = minimaxKey;
-    env.ANTHROPIC_BASE_URL = 'https://api.minimax.chat/v1';
+    env.ANTHROPIC_BASE_URL = 'https://api.minimax.io/anthropic';
     delete env.KPLR_KEY;
     delete env.DASHSCOPE_API_KEY;
     delete env.DASHSCOPE_BASE_URL;

@@ -19,9 +19,9 @@ const DASHSCOPE_DEFAULT_MODEL = "qwen3.6-plus";
 const DASHSCOPE_FAST_MODEL = "qwen3.6-plus";
 
 // MiniMax API (Anthropic-compatible)
-const MINIMAX_BASE_URL = "https://api.minimax.chat/v1";
-const MINIMAX_DEFAULT_MODEL = "MiniMax-M2.7";
-const MINIMAX_FAST_MODEL = "MiniMax-M2.7";
+const MINIMAX_BASE_URL = "https://api.minimax.io/anthropic";
+const MINIMAX_DEFAULT_MODEL = "minimax-m2.7";
+const MINIMAX_FAST_MODEL = "minimax-m2.7";
 
 function readMinimaxKey(): string | null {
   const credFile = join(homedir(), ".config", "physmind", "credentials");
