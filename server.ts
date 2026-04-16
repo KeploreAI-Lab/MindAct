@@ -1,11 +1,17 @@
 import { serve } from "bun";
-import { existsSync, mkdirSync, readdirSync, statSync, readFileSync, writeFileSync, unlinkSync, rmSync, symlinkSync, lstatSync } from "fs";
+import { existsSync, mkdirSync, readdirSync, statSync, readFileSync, writeFileSync, unlinkSync } from "fs";
 import { join, extname, relative, basename } from "path";
 import { homedir } from "os";
 import { buildIndex, collectMdFiles, parseLinks, BRAIN_INDEX_PATH } from "./decision_manager/build_index";
 import { analyzeDependencies } from "./decision_manager/tasks/dependency_analysis";
+import { loadLocalRegistry } from "./decision_manager/registry/local_registry";
 import { aiCall, FAST_MODEL } from "./decision_manager/ai_client";
 import { getTemplateSystem, buildTemplateMessage } from "./decision_manager/prompts/dependency_analysis";
+import { handleRegistry } from "./server/routes/registry";
+import { syncSkillsToPhysmind, syncCloudSkillStubs } from "./server/utils/skill_sync";
+import { RemoteRegistry } from "./decision_manager/registry/remote_registry";
+import type { DecisionDependency } from "./decision_manager/types";
+import yaml from "js-yaml";
 import { createRequire } from "module";
 // node-pty must be loaded via Node's require (not Bun's) because its native
 // addon uses posix_spawnp via spawn-helper, which Bun's loader breaks.
@@ -21,6 +27,8 @@ interface Config {
   project_path: string;
   skills_path: string;
   panel_ratio: number;
+  /** Optional: URL for the remote Cloudflare Workers registry. Absent = local-only mode. */
+  registry_url?: string;
 }
 
 function slugifySkillName(name: string): string {
@@ -146,6 +154,58 @@ function loadSkillCreatorReference(skillsRoot: string): string {
   return "";
 }
 
+// ─── Shared cloud publish helper ─────────────────────────────────────────────
+//
+// Uploads a skill DD + SKILL.md to the cloud registry as status:"pending".
+// Non-admin submissions are always pending until reviewed — this prevents
+// registry pollution by requiring explicit admin approval before a skill
+// becomes publicly searchable.
+//
+// Callers should fire-and-forget with .catch() since cloud unavailability
+// must never break local save operations.
+
+const DEFAULT_REGISTRY_URL = "https://mindact-registry.marvin-gao-cs.workers.dev";
+
+async function publishToCloud(dd: DecisionDependency, content: string, cfg: Config | null): Promise<void> {
+  const registryUrl =
+    (cfg as any)?.registry_url ??
+    process.env.MINDACT_REGISTRY_URL ??
+    DEFAULT_REGISTRY_URL;
+  const remote = new RemoteRegistry(registryUrl, (cfg as any)?.registry_token);
+  // Publish metadata → lands as status:"pending" for non-admin publishers
+  await remote.publish(dd);
+  // Build ZIP with SKILL.md + manifest
+  const AdmZip = createRequire(import.meta.url)("adm-zip");
+  const zip = new AdmZip();
+  zip.addFile("SKILL.md", Buffer.from(content, "utf-8"));
+  zip.addFile("manifest.json", Buffer.from(JSON.stringify(dd, null, 2), "utf-8"));
+  const buf: Buffer = zip.toBuffer();
+  await remote.uploadPackage(
+    dd.id, dd.version,
+    buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength) as ArrayBuffer,
+    content,
+  );
+}
+
+// ─── Skill content structural validator ──────────────────────────────────────
+//
+// Quick heuristic check on SKILL.md content quality before cloud upload.
+// Returns a 0-100 score and a list of issues. Score ≥ 60 is uploadable.
+
+function validateSkillContent(content: string): { score: number; issues: string[]; passed: boolean } {
+  const issues: string[] = [];
+  let score = 100;
+  if (!content.trimStart().startsWith("---"))           { issues.push("Missing YAML frontmatter"); score -= 20; }
+  if (!/^name:\s*\S/m.test(content))                   { issues.push("Frontmatter missing 'name'"); score -= 15; }
+  if (!/^description:\s*\S/m.test(content))            { issues.push("Frontmatter missing 'description'"); score -= 10; }
+  if (!/##\s+Execution\s+Procedure/i.test(content))    { issues.push("Missing '## Execution Procedure' section"); score -= 25; }
+  if (!/##\s+Trigger(\s+Conditions)?/i.test(content))  { issues.push("Missing '## Trigger Conditions' section"); score -= 15; }
+  const todos = (content.match(/\(TODO\)/g) ?? []).length;
+  if (todos > 2) { issues.push(`${todos} unfilled TODO placeholders`); score -= Math.min(20, 5 * todos); }
+  score = Math.max(0, score);
+  return { score, issues, passed: score >= 60 };
+}
+
 function normalizeConfig(raw: any): Config | null {
   if (!raw || typeof raw !== "object") return null;
   const vault_path = String(raw.vault_path ?? "").trim();
@@ -251,25 +311,7 @@ function extractSkillZips(skillsRoot: string) {
   syncSkillsToPhysmind(skillsRoot);
 }
 
-function syncSkillsToPhysmind(skillsRoot: string) {
-  const physmindSkills = join(homedir(), ".physmind", "skills");
-  try { mkdirSync(physmindSkills, { recursive: true }); } catch {}
-
-  let entries: ReturnType<typeof readdirSync>;
-  try { entries = readdirSync(skillsRoot, { withFileTypes: true }); } catch { return; }
-
-  for (const entry of entries) {
-    if (!entry.isDirectory()) continue;
-    const skillDir = join(skillsRoot, entry.name);
-    if (!existsSync(join(skillDir, "SKILL.md"))) continue;
-    const linkPath = join(physmindSkills, entry.name);
-    // Remove stale link/dir if it points elsewhere
-    if (existsSync(linkPath) || ((() => { try { lstatSync(linkPath); return true; } catch { return false; } })())) {
-      try { rmSync(linkPath, { recursive: true, force: true }); } catch {}
-    }
-    try { symlinkSync(skillDir, linkPath); } catch {}
-  }
-}
+// syncSkillsToPhysmind is now in server/utils/skill_sync.ts — imported above.
 
 function buildTree(dir: string, exts?: string[], depth = 0, maxDepth = 4): TreeNode[] {
   if (depth > maxDepth) return [];
@@ -409,6 +451,17 @@ function spawnPty(ws: import("bun").ServerWebSocket<unknown>, projectPath: strin
   return session;
 }
 
+// Called by handleRegistry after a skill is successfully installed.
+// Sends a skill_installed event to the client — the client handles the restart
+// (shows splash overlay, clears state, then sends back { type: "restart" }).
+// This avoids writing raw text into xterm.js which caused garbled terminal output.
+function onSkillInstalled(skillsDir: string, name: string, id: string) {
+  for (const [ws] of ptySessions) {
+    try { ws.send(JSON.stringify({ type: "skill_installed", name })); } catch {}
+  }
+  console.log(`[registry] Notified clients of skill install: ${id}`);
+}
+
 const server = serve({
   port: PORT,
   idleTimeout: 0,
@@ -426,6 +479,10 @@ const server = serve({
     if (req.method === "OPTIONS") {
       return new Response(null, { status: 204, headers: corsHeaders() });
     }
+
+    // Registry routes (/api/registry/*)
+    const registryRes = await handleRegistry(req, url, { onSkillInstalled });
+    if (registryRes) return registryRes;
 
     // API routes
     if (url.pathname === "/api/config") {
@@ -806,6 +863,13 @@ const server = serve({
       }
     }
 
+    // ── Skills: validate SKILL.md content before cloud upload ─────────────────
+    if (url.pathname === "/api/skills/validate" && req.method === "POST") {
+      const body = await req.json() as { content: string };
+      if (!body?.content?.trim()) return errorResponse("content required");
+      return jsonResponse(validateSkillContent(body.content));
+    }
+
     // ── Skills: generate template from analysis report ──────────────────────
     if (url.pathname === "/api/skills/generate-template" && req.method === "POST") {
       const body = await req.json() as {
@@ -838,7 +902,113 @@ const server = serve({
       if (!existsSync(skillDir)) mkdirSync(skillDir, { recursive: true });
       const skillFile = join(skillDir, "SKILL.md");
       writeFileSync(skillFile, body.content, "utf-8");
-      return jsonResponse({ ok: true, path: skillFile, skillDir });
+
+      // Sync symlinks so PhysMind CLI picks up the skill immediately
+      syncSkillsToPhysmind(rootDir);
+
+      // Write decision-dependency.yaml if missing (enables local registry pickup)
+      const ddFile = join(skillDir, "decision-dependency.yaml");
+      if (!existsSync(ddFile)) {
+        writeFileSync(ddFile, yaml.dump({
+          id: slug, name: body.name, description: `${body.name} skill`,
+          version: "1.0.0", type: "skill", modes: ["generator"],
+          tags: [], domain: "general", publisher: "user",
+          visibility: "private", trust: "untrusted", maturity: "L1",
+        }), "utf-8");
+      }
+
+      // Attempt cloud upload (non-blocking) — lands as status:"pending" until admin approves
+      const skillDD: DecisionDependency = {
+        id: slug, version: "1.0.0", type: "skill", modes: ["generator"],
+        name: body.name, description: `${body.name} skill`,
+        tags: [], domain: "general",
+        source: { type: "local", path: skillDir },
+        publisher: "user", visibility: "private",
+        trust: "untrusted", maturity: "L1",
+        installedAt: new Date().toISOString(),
+      };
+      publishToCloud(skillDD, body.content, cfg).catch(e =>
+        console.warn("[skills/save] cloud pending upload failed:", e?.message ?? e)
+      );
+
+      return jsonResponse({ ok: true, path: skillFile, skillDir, cloudStatus: "pending" });
+    }
+
+    // ── Skill Contribution — close-loop: missing knowledge DD → new skill DD ──
+    // Converts a missing type:"knowledge" DecisionDependency (from analysis pipeline)
+    // into a type:"skill" DD, saves it locally (immediate), and uploads to cloud (async).
+    if (url.pathname === "/api/registry/contribute-skill" && req.method === "POST") {
+      try {
+        const { dd, userContent, domain: reqDomain } = await req.json() as {
+          dd: DecisionDependency;
+          userContent: string;
+          domain?: string;
+        };
+        if (!dd?.name?.trim()) return errorResponse("dd.name required");
+        if (!userContent?.trim()) return errorResponse("userContent required");
+
+        const cfg = readConfig();
+        const skillsRoot = cfg?.skills_path || defaultSkillsRoot();
+        const domain = (reqDomain || dd.domain || "general").trim();
+        const slug = slugifySkillName(dd.id || dd.name);
+        const skillDir = join(skillsRoot, slug);
+
+        // Build the new skill DecisionDependency (promoted from knowledge → skill)
+        const skillDD: DecisionDependency = {
+          ...dd,
+          id: slug,
+          version: "1.0.0",
+          type: "skill",
+          modes: ["generator"],
+          source: { type: "local", path: skillDir },
+          publisher: "user",
+          visibility: "public",
+          trust: "untrusted",
+          maturity: "L1",
+          installedAt: new Date().toISOString(),
+        };
+
+        // Build SKILL.md using existing template + inline user content
+        const skillContent = buildFastSkillTemplate({
+          task: dd.description || dd.name,
+          domain,
+          dependencies: [],
+          foundFiles: [],
+        }).replace(
+          "## Execution Procedure",
+          `## User-Provided Knowledge\n${userContent.trim()}\n\n## Execution Procedure`,
+        );
+
+        // Persist locally — loadLocalRegistry() picks up both files on next analysis run
+        mkdirSync(skillDir, { recursive: true });
+        writeFileSync(join(skillDir, "SKILL.md"), skillContent, "utf-8");
+        writeFileSync(
+          join(skillDir, "decision-dependency.yaml"),
+          yaml.dump({
+            id: skillDD.id, name: skillDD.name, description: skillDD.description,
+            version: skillDD.version, type: skillDD.type, modes: skillDD.modes,
+            tags: skillDD.tags, domain: skillDD.domain, publisher: skillDD.publisher,
+            visibility: skillDD.visibility, trust: skillDD.trust, maturity: skillDD.maturity,
+          }),
+          "utf-8",
+        );
+
+        // Sync symlinks immediately — agent can use this skill in the next PTY session
+        syncSkillsToPhysmind(skillsRoot);
+
+        // Upload to cloud via shared helper (non-blocking, status:"pending" until admin review)
+        let published = false;
+        try {
+          await publishToCloud(skillDD, skillContent, cfg);
+          published = true;
+        } catch (e: any) {
+          console.warn("[contribute-skill] cloud upload failed:", e?.message ?? e);
+        }
+
+        return jsonResponse({ ok: true, localPath: join(skillDir, "SKILL.md"), published, cloudStatus: published ? "pending" : "local-only", dd: skillDD });
+      } catch (err: any) {
+        return errorResponse(`contribute-skill failed: ${err?.message ?? err}`, 500);
+      }
     }
 
     // ── Dependency Analysis (SSE streaming) ─────────────────────────────────
@@ -846,6 +1016,10 @@ const server = serve({
       const { task, lang } = await req.json() as { task: string; lang?: string };
       const cfg = readConfig();
       const vaultPath = cfg?.vault_path || "";
+
+      // Pre-load local registry so analyzeDependencies receives candidates[]
+      const skillsDir = cfg?.skills_path || defaultSkillsRoot();
+      const candidates = await loadLocalRegistry(skillsDir);
 
       const encoder = new TextEncoder();
       const stream = new ReadableStream({
@@ -857,7 +1031,7 @@ const server = serve({
             await analyzeDependencies({
               task,
               vaultPath,
-              skillsDir: cfg?.skills_path || defaultSkillsRoot(),
+              candidates,
               lang: (lang === "zh" || lang === "en") ? lang : "en",
               onEvent: (event) => send(event),
             });
@@ -928,6 +1102,19 @@ const server = serve({
 });
 
 console.log(`MindAct server running at http://localhost:${PORT}`);
+
+// Sync published cloud skills as SKILL.md stubs at startup (non-blocking).
+// This makes cloud skills visible to the PhysMind agent without a full install.
+(async () => {
+  const cfg = readConfig();
+  if (!cfg) return;
+  const skillsRoot = cfg.skills_path || defaultSkillsRoot();
+  const registryUrl =
+    cfg.registry_url ??
+    process.env.MINDACT_REGISTRY_URL ??
+    "https://mindact-registry.marvin-gao-cs.workers.dev";
+  await syncCloudSkillStubs(registryUrl, skillsRoot, (cfg as any).registry_token);
+})();
 
 // Auto-update @keploreai/physmind on startup (non-blocking)
 (async () => {

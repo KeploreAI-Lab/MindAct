@@ -39,6 +39,14 @@ export interface LogEntry {
   ts: number;
 }
 
+export type RegistryConnectionStatus = "connecting" | "connected" | "unreachable" | "degraded";
+
+export interface RegistryStats {
+  total_packages: number;
+  total_installs: number;
+  last_updated: string | null;
+}
+
 interface AppState {
   config: Config | null;
   configLoaded: boolean;
@@ -57,6 +65,16 @@ interface AppState {
   scrollToTerminalLine: ((line: number) => void) | null;
   isThinking: boolean;
   uiLanguage: UiLanguage;
+
+  // Registry connection
+  registryStatus: RegistryConnectionStatus;
+  registryStats: RegistryStats | null;
+  registryUrl: string;
+  lastRegistrySync: Date | null;
+
+  // Install state
+  installedPackageIds: Set<string>;
+  installProgress: Map<string, number>;   // dd_id → 0–100
 
   // Dependency analysis
   analysisMode: boolean;
@@ -85,6 +103,12 @@ interface AppState {
   setScrollToTerminalLine: (fn: ((line: number) => void) | null) => void;
   setIsThinking: (v: boolean) => void;
   setUiLanguage: (lang: UiLanguage) => void;
+
+  setRegistryStatus: (status: RegistryConnectionStatus, stats?: RegistryStats | null, url?: string) => void;
+  markInstalled: (ddId: string) => void;
+  initInstalledFromLocal: (ids: string[]) => void;
+  setInstallProgress: (ddId: string, progress: number) => void;
+  clearInstallProgress: (ddId: string) => void;
 
   setAnalysisMode: (v: boolean) => void;
   setAnalysisRunning: (v: boolean) => void;
@@ -121,6 +145,13 @@ export const useStore = create<AppState>((set) => ({
   isThinking: false,
   uiLanguage: "en",
 
+  registryStatus: "connecting" as RegistryConnectionStatus,
+  registryStats: null,
+  registryUrl: "",
+  lastRegistrySync: null,
+  installedPackageIds: new Set<string>(),
+  installProgress: new Map<string, number>(),
+
   analysisMode: false,
   analysisRunning: false,
   graphHighlights: [],
@@ -147,6 +178,31 @@ export const useStore = create<AppState>((set) => ({
   setScrollToTerminalLine: (fn) => set({ scrollToTerminalLine: fn }),
   setIsThinking: (v) => set({ isThinking: v }),
   setUiLanguage: (lang) => set({ uiLanguage: lang }),
+
+  markInstalled: (ddId) => set((s) => ({
+    installedPackageIds: new Set([...s.installedPackageIds, ddId]),
+  })),
+  initInstalledFromLocal: (ids) => set((s) => ({
+    // Merge disk-state ids with any in-session marks (so mid-session installs survive reloads)
+    installedPackageIds: new Set([...ids, ...s.installedPackageIds]),
+  })),
+  setInstallProgress: (ddId, progress) => set((s) => {
+    const next = new Map(s.installProgress);
+    next.set(ddId, progress);
+    return { installProgress: next };
+  }),
+  clearInstallProgress: (ddId) => set((s) => {
+    const next = new Map(s.installProgress);
+    next.delete(ddId);
+    return { installProgress: next };
+  }),
+
+  setRegistryStatus: (status, stats, url) => set((s) => ({
+    registryStatus: status,
+    registryStats: stats !== undefined ? stats : s.registryStats,
+    ...(url ? { registryUrl: url } : {}),
+    lastRegistrySync: status === "connected" ? new Date() : s.lastRegistrySync,
+  })),
 
   setAnalysisMode: (v) => set({ analysisMode: v }),
   setAnalysisRunning: (v) => set({ analysisRunning: v }),

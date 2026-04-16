@@ -147,7 +147,7 @@ export async function aiCall(opts: AiCallOptions): Promise<string> {
     return block.text;
   }
 
-  if (kplrKey && !model.startsWith("claude-")) {
+  if (kplrKey) {
     const msgs: DSMessage[] = [];
     if (opts.system) msgs.push({ role: "system", content: opts.system });
     for (const m of opts.messages) msgs.push({ role: m.role, content: m.content });
@@ -192,7 +192,7 @@ export async function aiStream(opts: StreamCallOptions): Promise<void> {
     return;
   }
 
-  if (kplrKey && !model.startsWith("claude-")) {
+  if (kplrKey) {
     const msgs: DSMessage[] = [];
     if (opts.system) msgs.push({ role: "system", content: opts.system });
     for (const m of opts.messages) msgs.push({ role: m.role, content: m.content });

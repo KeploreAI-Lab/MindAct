@@ -75,7 +75,7 @@ function resolveEntryCommand() {
 
   // Prefer @keploreai/physmind npm package resolved directly — most reliable
   try {
-    const script = require.resolve('@keploreai/physmind/dist/run.js');
+    const script = require.resolve('@keploreai/physmind/dist/cli.js');
     return { command: process.execPath, args: [script] };
   } catch {}
 
@@ -124,8 +124,13 @@ function readMinimaxKey() {
 }
 
 // Build the environment: strip Anthropic credentials, inject KPLR/DashScope or Minimax keys.
-function buildClawEnv() {
+function buildClawEnv(cols, rows) {
   const env = { ...process.env };
+  // Explicitly set terminal dimensions so Ink/physmind reads the correct column
+  // count from the environment rather than querying the TTY before the PTY is
+  // fully wired up.  This eliminates a second source of width-mismatch garbling.
+  if (cols) env.COLUMNS = String(cols);
+  if (rows) env.LINES = String(rows);
   delete env.ANTHROPIC_API_KEY;
   delete env.ANTHROPIC_AUTH_TOKEN;
   const minimaxKey = readMinimaxKey() || env.MINIMAX_API_KEY;
@@ -170,6 +175,8 @@ function send(msg) {
 }
 
 function spawnTerm(cols, rows) {
+  cols = cols || 120;
+  rows = rows || 40;
   if (term) { try { term.kill(); } catch {} }
 
   if (!hasKplrKey()) {
@@ -205,10 +212,10 @@ function spawnTerm(cols, rows) {
   try {
     term = pty.spawn(entry.command, entry.args, {
       name: 'xterm-256color',
-      cols: cols || 120,
-      rows: rows || 40,
+      cols,
+      rows,
       cwd,
-      env: buildClawEnv(),
+      env: buildClawEnv(cols, rows),
     });
   } catch (err) {
     send({
@@ -233,25 +240,60 @@ function spawnTerm(cols, rows) {
       .replace(/DASHSCOPE_API_KEY[^\r\n]*/g, '');
     send({ type: 'data', data: filtered });
   });
+
+  // After physmind finishes its initial render (~500ms), force a SIGWINCH so it
+  // redraws at the correct PTY dimensions.  physmind uses cursor-up for its logo
+  // animation; if the TUI height after the first render differs from what Ink
+  // calculated, cursor positions go wrong and box-drawing chars overwrite text.
+  // A clean SIGWINCH right after startup lets Ink recalculate everything.
+  setTimeout(() => {
+    if (!term) return;
+    const c = term.cols, r = term.rows;
+    try {
+      // Nudge size by 1 col and back — guarantees SIGWINCH on all platforms
+      // even if the OS skips TIOCSWINSZ when dimensions are unchanged.
+      term.resize(c > 10 ? c - 1 : c + 1, r);
+      term.resize(c, r);
+    } catch {}
+  }, 600);
+
   term.onExit(() => {
     send({ type: 'exit' });
     process.exit(0);
   });
 }
 
-// Start terminal immediately
-spawnTerm(120, 40);
+// Defer PTY spawn until the client sends its actual terminal dimensions via the
+// first "resize" message.  This prevents physmind from rendering its splash
+// screen at the wrong column width (120 hardcoded vs the real xterm width),
+// which was the cause of garbled/scattered characters on startup.
+let spawned = false;
+
+function doSpawn(cols, rows) {
+  if (spawned) return;
+  spawned = true;
+  spawnTerm(cols || 120, rows || 40);
+}
+
+// Fallback: if no resize arrives within 600 ms, spawn at safe defaults.
+// The client always sends resize on ws.onopen, so this path is a safety net.
+const spawnFallbackTimer = setTimeout(() => doSpawn(120, 40), 600);
 
 // Read commands from stdin
 const rl = readline.createInterface({ input: process.stdin, terminal: false });
 rl.on('line', (line) => {
   try {
     const msg = JSON.parse(line);
-    if (!term) return;
-    if (msg.type === 'input') {
-      term.write(msg.data);
-    } else if (msg.type === 'resize') {
-      term.resize(msg.cols, msg.rows);
+    if (msg.type === 'resize') {
+      if (!spawned) {
+        // First resize message — use these real dimensions for the initial spawn
+        clearTimeout(spawnFallbackTimer);
+        doSpawn(msg.cols, msg.rows);
+      } else if (term) {
+        term.resize(msg.cols, msg.rows);
+      }
+    } else if (msg.type === 'input') {
+      if (term) term.write(msg.data);
     }
   } catch {}
 });

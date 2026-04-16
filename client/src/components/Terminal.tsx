@@ -4,7 +4,8 @@ import { FitAddon } from "@xterm/addon-fit";
 import "@xterm/xterm/css/xterm.css";
 import { useStore } from "../store";
 import { t } from "../i18n";
-import type { AnalysisReport } from "../types/analysis";
+import type { AnalysisReport, DecisionDependency, ResolvedDependency } from "../types/analysis";
+import { getMatchedSkill } from "../types/analysis";
 import DependencyReport from "./DependencyReport";
 
 function stripAnsi(s: string): string {
@@ -34,6 +35,21 @@ function Terminal() {
   const [skillSaving, setSkillSaving] = useState(false);
   const [skillTemplateLoading, setSkillTemplateLoading] = useState(false);
 
+  // Skill contribution close-loop state
+  const [skillRequestData, setSkillRequestData] = useState<{
+    missing: DecisionDependency[];
+    domain: string;
+    task: string;
+  } | null>(null);
+  const [contributeTarget, setContributeTarget] = useState<DecisionDependency | null>(null);
+  const [contributeContent, setContributeContent] = useState("");
+  const [contributing, setContributing] = useState(false);
+
+  const [installingSkillCreator, setInstallingSkillCreator] = useState(false);
+
+  const [splashVisible, setSplashVisible] = useState(true);
+  const [splashFading, setSplashFading] = useState(false);
+
   const containerRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<XTerm | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
@@ -46,6 +62,13 @@ function Terminal() {
   const outputBufferRef = useRef<string[]>([]);
   const flushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const thinkingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const cleanResizeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const hideSplashTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const splashHiddenRef = useRef(false);
+  // True during the initial startup phase — suppresses spurious cleanResize
+  // restarts triggered by fitAddon.fit() calls in ws.onopen / useEffect before
+  // the PTY has had a chance to render its welcome screen at the correct size.
+  const initialPhaseRef = useRef(true);
 
   const [inputValue, setInputValue] = useState("");
   const composingRef = useRef(false); // track IME composition state
@@ -145,11 +168,15 @@ function Terminal() {
             } else if (event.type === "ghost") {
               const gh = event.data as { nodes: { name: string; template: string }[] };
               setGhostNodes(gh.nodes);
+            } else if (event.type === "skill_request") {
+              setSkillRequestData(event.data as { missing: DecisionDependency[]; domain: string; task: string });
             } else if (event.type === "report") {
               setAnalysisReport(event.data as AnalysisReport);
             } else if (event.type === "file_progress") {
               const fp = event.data as { current: number; total: number; fileName: string };
               useStore.getState().setAnalysisProgress(fp);
+            } else if (event.type === "error") {
+              addLogEntry(`❌ Analysis error: ${event.data as string}`);
             }
           } catch {}
         }
@@ -197,6 +224,53 @@ function Terminal() {
     }
   }, [skillTemplateLoading]);
 
+  // ── Skill Creator invocation ─────────────────────────────────────────────────
+  // Instead of generating a static template, this checks whether the skill-creator
+  // skill is installed, auto-installs it from the cloud registry if needed, then
+  // invokes it in the terminal with the missing dep context.
+  const createWithSkillCreator = useCallback(async (dep: ResolvedDependency) => {
+    if (installingSkillCreator) return;
+    setInstallingSkillCreator(true);
+    try {
+      // 1. Check if skill-creator is installed locally
+      const listRes = await fetch("/api/registry/list?query=skill-creator&limit=5");
+      const listData = await listRes.json() as { items?: DecisionDependency[] };
+      const items = listData.items ?? [];
+      const alreadyInstalled = items.find(
+        i => (i.id === "skill-creator" || i.name.toLowerCase().includes("skill-creator")) && i.installedAt
+      );
+
+      if (!alreadyInstalled) {
+        addLogEntry("⬇ Pulling skill-creator from registry…");
+        const installRes = await fetch("/api/registry/install", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ id: "skill-creator" }),
+        });
+        const installData = await installRes.json() as { installed?: boolean; error?: string; extracted_to?: string };
+        if (!installRes.ok || !installData.installed) {
+          addLogEntry(`❌ skill-creator not available: ${installData.error ?? "not found in registry"}`);
+          // Graceful fallback: open static template so user isn't left empty-handed
+          if (analysisReport) openSkillDraft(analysisReport);
+          return;
+        }
+        addLogEntry(`✅ skill-creator installed — created skills upload as pending review`);
+      }
+
+      // 2. Dismiss the analysis report and invoke skill-creator in the terminal
+      const prompt = `@skill-creator Create a skill for: "${dep.dd.name}". ${dep.dd.description ?? ""}`.trim();
+      setAnalysisReport(null);
+      setCreatedSkillPathForReport(null);
+      clearGraphHighlights();
+      submitInput(prompt);
+      addLogEntry(`⚡ skill-creator invoked for "${dep.dd.name}"`);
+    } catch (err: any) {
+      addLogEntry(`❌ skill-creator setup failed: ${err?.message ?? String(err)}`);
+    } finally {
+      setInstallingSkillCreator(false);
+    }
+  }, [installingSkillCreator, submitInput, addLogEntry, openSkillDraft, analysisReport]);
+
   const saveSkillDraft = useCallback(async () => {
     if (!skillDraftName.trim() || !skillDraftContent.trim()) return;
     setSkillSaving(true);
@@ -216,13 +290,49 @@ function Terminal() {
       setSkillDraftContent("");
       setSkillDraftName("");
       setCreatedSkillPathForReport(data.path);
-      setTerminalBanner(`✓ Skill saved: ${data.path}`);
+      const cloudNote = data.cloudStatus === "pending" ? " — uploaded to registry (pending review)" : "";
+      setTerminalBanner(`✓ Skill saved: ${data.path}${cloudNote}`);
     } catch (err: any) {
       addLogEntry(`❌ Skill save failed: ${err?.message ?? String(err)}`);
     } finally {
       setSkillSaving(false);
     }
   }, [skillDraftName, skillDraftContent]);
+
+  const contributeSkill = useCallback(async () => {
+    if (!contributeTarget || !contributeContent.trim()) return;
+    setContributing(true);
+    try {
+      const res = await fetch("/api/registry/contribute-skill", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          dd: contributeTarget,
+          userContent: contributeContent,
+          domain: skillRequestData?.domain ?? contributeTarget.domain ?? "general",
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data?.ok) {
+        addLogEntry(`❌ Skill contribution failed: ${data?.error ?? "unknown error"}`);
+        return;
+      }
+      addLogEntry(`✅ Skill contributed: ${data.localPath}${data.published ? " (synced to cloud)" : ""}`);
+      setTerminalBanner(`✓ New skill "${contributeTarget.name}" is now available to the agent`);
+      setContributeTarget(null);
+      setContributeContent("");
+      // Clear request only if all missing deps have been contributed (or user dismisses)
+      setSkillRequestData(prev => {
+        if (!prev) return null;
+        const remaining = prev.missing.filter(d => d.id !== contributeTarget.id && d.name !== contributeTarget.name);
+        return remaining.length > 0 ? { ...prev, missing: remaining } : null;
+      });
+    } catch (err: any) {
+      addLogEntry(`❌ Skill contribution failed: ${err?.message ?? String(err)}`);
+    } finally {
+      setContributing(false);
+    }
+  }, [contributeTarget, contributeContent, skillRequestData]);
 
   const handleInputKeyDown = useCallback((e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && !e.shiftKey) {
@@ -311,6 +421,13 @@ function Terminal() {
     setTimeout(() => textareaRef.current?.focus(), 0);
   }, []);
 
+  const hideSplash = useCallback(() => {
+    if (splashHiddenRef.current) return;
+    splashHiddenRef.current = true;
+    setSplashFading(true);
+    setTimeout(() => setSplashVisible(false), 550);
+  }, []);
+
   const connect = useCallback(() => {
     if (wsRef.current) { try { wsRef.current.close(); } catch {} }
 
@@ -320,6 +437,7 @@ function Terminal() {
     ws.onopen = () => {
       if (wsRef.current !== ws) return;
       compatibilityModeRef.current = false;
+      initialPhaseRef.current = true; // suppress cleanResize during startup
       if (exitNoticeTimerRef.current) {
         clearTimeout(exitNoticeTimerRef.current);
         exitNoticeTimerRef.current = null;
@@ -330,7 +448,13 @@ function Terminal() {
         fit.fit();
         ws.send(JSON.stringify({ type: "resize", cols: term.cols, rows: Math.max(5, term.rows) }));
       }
+      // Allow cleanResize to respond to user-initiated window resizes only after
+      // the PTY worker's startup SIGWINCH (600ms) + welcome screen render (~900ms).
+      setTimeout(() => { initialPhaseRef.current = false; }, 1500);
       setTimeout(() => textareaRef.current?.focus(), 100);
+      // Fallback: hide splash after 4 s if PTY ready signal never arrives
+      if (hideSplashTimeoutRef.current) clearTimeout(hideSplashTimeoutRef.current);
+      hideSplashTimeoutRef.current = setTimeout(hideSplash, 4000);
     };
 
     ws.onmessage = (event) => {
@@ -342,6 +466,7 @@ function Terminal() {
         if (msg.type === "data") {
           if (typeof msg.data === "string" && msg.data.includes("PTY unavailable")) {
             compatibilityModeRef.current = true;
+            hideSplash(); // show error message immediately
             if (exitNoticeTimerRef.current) {
               clearTimeout(exitNoticeTimerRef.current);
               exitNoticeTimerRef.current = null;
@@ -371,11 +496,31 @@ function Terminal() {
               /\r[>?]\s/.test(stripped)
             ) {
               setIsThinking(false);
+              hideSplash();
             }
-            t.write(data, () => { t.scrollToBottom(); });
+            // Scroll management: if user was at the bottom, follow new output.
+            // If they scrolled up to read history, restore their position after the
+            // write — Ink cursor-up sequences otherwise silently move the viewport.
+            const wasAtBottom = t.buffer.active.viewportY >= t.buffer.active.baseY;
+            const savedViewportY = t.buffer.active.viewportY;
+            t.write(data, () => {
+              const terminal = termRef.current;
+              if (!terminal) return;
+              if (wasAtBottom) {
+                terminal.scrollToBottom();
+              } else {
+                terminal.scrollToLine(savedViewportY);
+              }
+            });
           }, 16);
+        } else if (msg.type === "skill_installed") {
+          // Show a React banner only — no terminal restart.
+          // The skill is on disk + symlinked; dependency analysis reads it fresh on next call.
+          // PhysMind agent can read ~/.physmind/installed-skills.json via its file tools.
+          useStore.getState().setTerminalBanner(`✓ Skill "${msg.name}" installed`);
         } else if (msg.type === "exit") {
           setIsThinking(false);
+          hideSplash(); // always clear splash on exit
           // Delay notice a bit; if compatibility fallback message arrives, suppress it.
           if (exitNoticeTimerRef.current) clearTimeout(exitNoticeTimerRef.current);
           exitNoticeTimerRef.current = setTimeout(() => {
@@ -393,18 +538,38 @@ function Terminal() {
         if (wsRef.current?.readyState !== WebSocket.OPEN) connect();
       }, 3000);
     };
-  }, []);
+  }, [hideSplash]);
 
   const restart = useCallback(() => {
     setIsThinking(false);
+    // Show splash for user-initiated restart
+    splashHiddenRef.current = false;
+    setSplashFading(false);
+    setSplashVisible(true);
+    if (hideSplashTimeoutRef.current) clearTimeout(hideSplashTimeoutRef.current);
+    hideSplashTimeoutRef.current = setTimeout(hideSplash, 4000);
+    // Reset conversation counter so the post-restart resize path works correctly.
+    histRef.current = { lineCount: 0, assistantBuffer: "", waitingForAssistant: false, lastAssistantLine: 0, entryCounter: 0 };
+    // Cancel any pending output flush and discard buffered data so stale pre-restart
+    // output is not written to the freshly cleared terminal.
+    if (flushTimerRef.current) { clearTimeout(flushTimerRef.current); flushTimerRef.current = null; }
+    outputBufferRef.current = [];
+    // Suppress cleanResize during the PTY startup phase, mirroring ws.onopen.
+    // When restarting over the existing WebSocket ws.onopen never fires, leaving
+    // initialPhaseRef=false. Resize events from the Ink startup animation then
+    // trigger cleanResize, which clears the screen and sends SIGWINCH, causing
+    // Ink to loop its animation and fill the terminal with repeated frames.
+    initialPhaseRef.current = true;
+    if (cleanResizeTimerRef.current) { clearTimeout(cleanResizeTimerRef.current); cleanResizeTimerRef.current = null; }
+    setTimeout(() => { initialPhaseRef.current = false; }, 1500);
     const term = termRef.current;
-    if (term) { term.clear(); term.writeln("\x1b[90m[Restarting...]\x1b[0m"); }
+    if (term) { term.clear(); }
     if (wsRef.current?.readyState === WebSocket.OPEN) {
       wsRef.current.send(JSON.stringify({ type: "restart" }));
     } else {
       connect();
     }
-  }, [connect]);
+  }, [connect, hideSplash]);
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -449,6 +614,25 @@ function Terminal() {
       if (wsRef.current?.readyState === WebSocket.OPEN) {
         wsRef.current.send(JSON.stringify({ type: "resize", cols, rows: Math.max(5, rows) }));
       }
+      // After terminal resize, physmind's logo animation may use stale cursor-up
+      // offsets (calculated for the old column count), painting box-drawing chars
+      // over regular text.  Debounce 600ms (user stops dragging), then clear
+      // visible artifacts and send a SIGWINCH for a clean Ink re-render.
+      // Skip during the initial startup phase (initialPhaseRef=true) to avoid
+      // a spurious restart caused by fitAddon.fit() calls in ws.onopen / useEffect
+      // racing with the PTY worker's own startup SIGWINCH at 600ms.
+      if (initialPhaseRef.current) return;
+      if (cleanResizeTimerRef.current) clearTimeout(cleanResizeTimerRef.current);
+      cleanResizeTimerRef.current = setTimeout(() => {
+        const t = termRef.current;
+        const ws = wsRef.current;
+        if (!t || ws?.readyState !== WebSocket.OPEN) return;
+        // Clear visible artifacts and nudge physmind to redraw via SIGWINCH.
+        t.write("\x1b[2J\x1b[3J\x1b[H"); // erase screen + scrollback + home
+        const fit = fitAddonRef.current;
+        if (fit) fit.fit();
+        ws.send(JSON.stringify({ type: "resize", cols: t.cols, rows: Math.max(5, t.rows) }));
+      }, 600);
     });
     // Let xterm forward raw keys directly to PTY so TUI navigation works.
     term.onData((data) => sendToPty(data));
@@ -475,6 +659,8 @@ function Terminal() {
       if (exitNoticeTimerRef.current) clearTimeout(exitNoticeTimerRef.current);
       if (flushTimerRef.current) clearTimeout(flushTimerRef.current);
       if (thinkingTimerRef.current) clearTimeout(thinkingTimerRef.current);
+      if (cleanResizeTimerRef.current) clearTimeout(cleanResizeTimerRef.current);
+      if (hideSplashTimeoutRef.current) clearTimeout(hideSplashTimeoutRef.current);
       if (wsRef.current) wsRef.current.close();
       setScrollToTerminalLine(null);
     };
@@ -536,6 +722,39 @@ function Terminal() {
       {/* xterm output — display only, disableStdin */}
       <div style={{ flex: 1, overflow: "hidden", position: "relative" }} onClick={() => termRef.current?.focus()}>
         <div ref={containerRef} style={{ position: "absolute", inset: 0, padding: "4px 0 0 4px" }} />
+
+        {/* Splash overlay — hides garbled Ink startup animation until TUI is stable */}
+        {splashVisible && (
+          <div style={{
+            position: "absolute", inset: 0, background: "#1e1e1e", zIndex: 5,
+            display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
+            opacity: splashFading ? 0 : 1, transition: "opacity 0.6s ease",
+            pointerEvents: "none", gap: 24,
+          }}>
+            {/* Logo row */}
+            <div style={{ display: "flex", alignItems: "center", gap: 20 }}>
+              <pre style={{
+                margin: 0, color: "#4ec9b0",
+                fontFamily: "'JetBrains Mono', 'Fira Code', Menlo, monospace",
+                fontSize: 15, lineHeight: "1.45",
+              }}>{` \\|/\n  o \n /|\\`}</pre>
+              <div>
+                <div style={{ color: "#e0e0e0", fontSize: 22, fontWeight: 700, letterSpacing: 2 }}>PhysMind</div>
+                <div style={{ color: "#569cd6", fontSize: 12, marginTop: 5, letterSpacing: 0.5 }}>Powered by MindAct</div>
+              </div>
+            </div>
+            {/* Pulsing dots */}
+            <div style={{ display: "flex", gap: 7 }}>
+              {[0, 1, 2].map(i => (
+                <span key={i} style={{
+                  width: 5, height: 5, borderRadius: "50%", background: "#4ec9b0",
+                  display: "inline-block",
+                  animation: `thinkPulse 1.4s ease-in-out ${i * 0.2}s infinite`,
+                }} />
+              ))}
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Dependency Analysis Report (floats above input) */}
@@ -543,8 +762,9 @@ function Terminal() {
         <DependencyReport
           report={analysisReport}
           onExecute={(enrichedPrompt) => {
-            if (analysisReport?.matchedSkill) {
-              const { name, score } = analysisReport.matchedSkill;
+            const matchedSkill = analysisReport ? getMatchedSkill(analysisReport) : null;
+            if (matchedSkill) {
+              const { name, score } = matchedSkill;
               const pct = Math.round(score * 100);
               termRef.current?.write(`\r\n\x1b[36m[MindAct] ✓ Skill loaded: ${name} (${pct}%)\x1b[0m\r\n`);
             }
@@ -573,6 +793,7 @@ function Terminal() {
           onDismiss={() => {
             setAnalysisReport(null);
             setCreatedSkillPathForReport(null);
+            setSkillRequestData(null);
             clearGraphHighlights();
           }}
           onAddKnowledge={() => {
@@ -586,7 +807,100 @@ function Terminal() {
           onCreateSkill={(report) => { openSkillDraft(report); }}
           createdSkillReady={!!createdSkillPathForReport}
           creatingSkill={skillTemplateLoading}
+          onCreateWithSkillCreator={createWithSkillCreator}
+          installingSkillCreator={installingSkillCreator}
         />
+      )}
+
+      {/* Skill Contribution Panel — shown when analysis finds missing skill DDs */}
+      {skillRequestData && !contributeTarget && (
+        <div style={{
+          position: "absolute", bottom: 80, left: 12, right: 12, zIndex: 110,
+          background: "#16100a", border: "1px solid #c8a45a55", borderRadius: 8,
+          padding: "10px 14px", display: "flex", flexDirection: "column", gap: 8,
+          boxShadow: "0 4px 24px #00000066",
+        }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <span style={{ color: "#c8a45a", fontSize: 11, fontWeight: 600 }}>
+              ⚠ Missing skills — help improve the agent:
+            </span>
+            <button
+              onClick={() => setSkillRequestData(null)}
+              style={{ marginLeft: "auto", background: "none", border: "none", color: "#666", cursor: "pointer", fontSize: 14, lineHeight: 1 }}
+            >✕</button>
+          </div>
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+            {skillRequestData.missing.map(dep => (
+              <button
+                key={dep.id}
+                onClick={() => setContributeTarget(dep)}
+                style={{
+                  background: "#1e1400", border: "1px solid #c8a45a66", color: "#c8a45a",
+                  borderRadius: 5, padding: "4px 10px", fontSize: 11, cursor: "pointer",
+                }}
+                onMouseEnter={e => (e.currentTarget.style.background = "#2a1e00")}
+                onMouseLeave={e => (e.currentTarget.style.background = "#1e1400")}
+              >
+                + Contribute &quot;{dep.name}&quot;
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Contribution form for a specific missing skill DD */}
+      {contributeTarget && (
+        <div style={{
+          position: "absolute", inset: 0, background: "rgba(0,0,0,0.55)", zIndex: 125,
+          display: "flex", alignItems: "center", justifyContent: "center", padding: 20,
+        }}>
+          <div style={{
+            width: "min(640px, 95%)", background: "#111118",
+            border: "1px solid #2a2a3a", borderRadius: 10,
+            display: "flex", flexDirection: "column", overflow: "hidden",
+          }}>
+            <div style={{ padding: "10px 14px", borderBottom: "1px solid #242436", display: "flex", alignItems: "center", gap: 8 }}>
+              <span style={{ color: "#c8a45a", fontSize: 12, fontWeight: 600 }}>
+                Contribute Skill: {contributeTarget.name}
+              </span>
+              <button
+                onClick={() => { setContributeTarget(null); setContributeContent(""); }}
+                style={{ marginLeft: "auto", background: "none", border: "none", color: "#666", cursor: "pointer", fontSize: 16, lineHeight: 1 }}
+              >✕</button>
+            </div>
+            {contributeTarget.description && (
+              <div style={{ padding: "6px 14px", color: "#888", fontSize: 11, borderBottom: "1px solid #1a1a2a" }}>
+                {contributeTarget.description}
+              </div>
+            )}
+            <textarea
+              autoFocus
+              value={contributeContent}
+              onChange={e => setContributeContent(e.target.value)}
+              placeholder="Describe this skill: what it does, key steps, constraints, tips, commands…"
+              style={{
+                background: "#0f0f16", color: "#d4d4d4", border: "none", outline: "none",
+                resize: "none", padding: "12px 14px", fontSize: 12,
+                fontFamily: "'JetBrains Mono', Menlo, monospace", lineHeight: 1.6,
+                minHeight: 160,
+              }}
+              rows={7}
+            />
+            <div style={{ padding: "10px 14px", borderTop: "1px solid #242436", display: "flex", gap: 8, justifyContent: "flex-end" }}>
+              <button
+                onClick={() => { setContributeTarget(null); setContributeContent(""); }}
+                style={ghostBtnStyle}
+              >Cancel</button>
+              <button
+                onClick={contributeSkill}
+                disabled={contributing || !contributeContent.trim()}
+                style={smallBtnStyle}
+              >
+                {contributing ? "Contributing…" : "Contribute & Save"}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {skillDraftOpen && (

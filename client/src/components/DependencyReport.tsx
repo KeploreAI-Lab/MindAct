@@ -1,5 +1,6 @@
 import React, { useState } from "react";
-import type { AnalysisReport } from "../types/analysis";
+import type { AnalysisReport, ResolvedDependency } from "../types/analysis";
+import { getMatchedSkill, getLegacyDependencies } from "../types/analysis";
 import { useStore } from "../store";
 import { t } from "../i18n";
 
@@ -13,16 +14,77 @@ interface Props {
   onCreateSkill: (report: AnalysisReport) => void;
   createdSkillReady?: boolean;
   creatingSkill?: boolean;
+  /** Called when user wants to create a missing skill via skill-creator */
+  onCreateWithSkillCreator?: (dep: ResolvedDependency) => void;
+  /** True while skill-creator is being installed from cloud */
+  installingSkillCreator?: boolean;
 }
 
-export default function DependencyReport({ report, onExecute, onExecuteRaw, onApplyCreatedSkill, onDismiss, onAddKnowledge, onCreateSkill, createdSkillReady, creatingSkill }: Props) {
+// ─── Type icons + trust badges ────────────────────────────────────────────────
+
+function typeIcon(type: string): string {
+  switch (type) {
+    case "skill":     return "⚡";
+    case "knowledge": return "📚";
+    case "connector": return "🔌";
+    case "memory":    return "🧠";
+    default:          return "📦";
+  }
+}
+
+function trustBadge(trust: string): { emoji: string; color: string } {
+  switch (trust) {
+    case "org-approved": return { emoji: "🟢", color: "#4ec9b0" };
+    case "reviewed":     return { emoji: "🔵", color: "#7dd3fc" };
+    default:             return { emoji: "🟡", color: "#c8a45a" };
+  }
+}
+
+function maturityLabel(maturity: string): string {
+  return maturity ?? "L0";
+}
+
+// ─── Component ────────────────────────────────────────────────────────────────
+
+export default function DependencyReport({
+  report,
+  onExecute,
+  onExecuteRaw,
+  onApplyCreatedSkill,
+  onDismiss,
+  onAddKnowledge,
+  onCreateSkill,
+  createdSkillReady,
+  creatingSkill,
+  onCreateWithSkillCreator,
+  installingSkillCreator,
+}: Props) {
   const uiLanguage = useStore(s => s.uiLanguage);
   const [expanded, setExpanded] = useState(false);
+
   const levelConfig = {
     high:   { color: "#4ec9b0", labelKey: "confidence_high" as const, bg: "#0a2a20" },
     medium: { color: "#c8a45a", labelKey: "confidence_medium" as const, bg: "#2a1800" },
     low:    { color: "#e05555", labelKey: "confidence_low" as const, bg: "#2a0a0a" },
   }[report.confidenceLevel];
+
+  // Use compat helpers to get matched skill + legacy dependency list
+  const matchedSkill = getMatchedSkill(report);
+  const deps = getLegacyDependencies(report);
+
+  // v2: get non-skill resolved deps for richer display
+  const resolvedDeps: ResolvedDependency[] = report.resolved
+    ? report.resolved.filter(r => r.dd.type !== "skill")
+    : [];
+  const useV2 = report.resolved && report.resolved.length > 0;
+
+  // Missing deps that are good candidates for skill creation (gated by _isSkillCreatable)
+  const creatableSkillDeps: ResolvedDependency[] = report.resolved
+    ? report.resolved.filter(r =>
+        r.coverage === "none" &&
+        ((r.dd as any)._isSkillCreatable === true || r.dd.type === "skill")
+      )
+    : [];
 
   return (
     <div style={{
@@ -61,18 +123,22 @@ export default function DependencyReport({ report, onExecute, onExecuteRaw, onAp
 
       {/* Dependency list */}
       <div style={{ padding: "10px 14px" }}>
-        {report.matchedSkill && (
+        {matchedSkill && (
           <div style={{ marginBottom: 8, padding: "7px 8px", background: "#0a1a20", borderRadius: 4, fontSize: 10, color: "#7dd3fc" }}>
-            ✅ {t(uiLanguage, "report_skill_matched")}: <b>{report.matchedSkill.name}</b>
+            ⚡ {t(uiLanguage, "report_skill_matched")}: <b>{matchedSkill.name}</b>
+            <span style={{ marginLeft: 8, fontSize: 9, color: "#4ec9b0" }}>
+              {Math.round(matchedSkill.score * 100)}%
+            </span>
           </div>
         )}
-        {report.matchedSkill ? (
+
+        {matchedSkill ? (
           <div style={{ padding: "8px 10px", background: "#0a1a20", borderRadius: 4, fontSize: 11, color: "#9dd9ff", lineHeight: 1.6 }}>
-            {t(uiLanguage, "report_skill_matched_detail", { name: report.matchedSkill.name })}<br />
-            {t(uiLanguage, "report_skill_path", { path: report.matchedSkill.path })}<br />
+            {t(uiLanguage, "report_skill_matched_detail", { name: matchedSkill.name })}<br />
+            {t(uiLanguage, "report_skill_path", { path: matchedSkill.path })}<br />
             {t(uiLanguage, "report_skill_apply_question")}
           </div>
-        ) : report.dependencies.length === 0 ? (
+        ) : deps.length === 0 ? (
           <div style={{ padding: "6px 8px", background: "#1a0a00", borderRadius: 4, fontSize: 10, color: "#c8a45a" }}>
             ⚠ {t(uiLanguage, "report_no_deps_warning")}
           </div>
@@ -82,39 +148,85 @@ export default function DependencyReport({ report, onExecute, onExecuteRaw, onAp
               {t(uiLanguage, "report_dependencies")} · {report.foundFiles.length} {t(uiLanguage, "report_covered")} · {report.missingDeps.length} {t(uiLanguage, "report_missing")}
             </div>
             <div style={{ display: "flex", flexDirection: "column", gap: 4, maxHeight: expanded ? 240 : 130, overflowY: "auto" }}>
-              {report.dependencies.map((dep, i) => (
-                <div key={i} style={{
-                  display: "flex", alignItems: "flex-start", gap: 8,
-                  padding: "4px 6px", borderRadius: 4,
-                  background: dep.coverage === "none" ? "#1a0808" : "#0a1a0a",
-                }}>
-                  <span style={{ fontSize: 12, flexShrink: 0, marginTop: 1 }}>
-                    {dep.coverage === "full" ? "✅" : dep.coverage === "partial" ? "🟡" : "❌"}
-                  </span>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontSize: 11, color: dep.coverage === "none" ? "#e05555" : "#ccc", fontWeight: 500 }}>
-                      {dep.name}
-                      {dep.level === "critical" && (
-                        <span style={{ fontSize: 9, color: "#e05555", marginLeft: 6, verticalAlign: "middle" }}>{t(uiLanguage, "report_dep_required")}</span>
-                      )}
+              {useV2
+                ? resolvedDeps.map((rd, i) => {
+                    const badge = trustBadge(rd.dd.trust);
+                    return (
+                      <div key={i} style={{
+                        display: "flex", alignItems: "flex-start", gap: 8,
+                        padding: "4px 6px", borderRadius: 4,
+                        background: rd.coverage === "none" ? "#1a0808" : "#0a1a0a",
+                      }}>
+                        <span style={{ fontSize: 12, flexShrink: 0, marginTop: 1 }}>
+                          {rd.coverage === "full" ? "✅" : rd.coverage === "partial" ? "🟡" : "❌"}
+                        </span>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                            <span style={{ fontSize: 10, opacity: 0.7 }}>{typeIcon(rd.dd.type)}</span>
+                            <span style={{ fontSize: 11, color: rd.coverage === "none" ? "#e05555" : "#ccc", fontWeight: 500 }}>
+                              {rd.dd.name}
+                            </span>
+                            <span style={{ fontSize: 9, color: badge.color, marginLeft: 2 }} title={`Trust: ${rd.dd.trust}`}>
+                              {badge.emoji}
+                            </span>
+                            <span style={{ fontSize: 8, color: "#555", marginLeft: 2 }}>
+                              {maturityLabel(rd.dd.maturity)}
+                            </span>
+                          </div>
+                          {rd.coveredBy.length > 0 && (
+                            <div style={{ fontSize: 9, color: "#4ec9b0", marginTop: 1 }}>
+                              → {rd.coveredBy.join(", ")}
+                            </div>
+                          )}
+                          {rd.coverage === "none" && (
+                            <div style={{ fontSize: 9, color: "#666", marginTop: 1 }}>
+                              {(rd.dd as any)._isSkillCreatable
+                                ? "⚡ Create this skill below"
+                                : rd.dd.type === "knowledge"
+                                  ? "📚 Add to your vault and re-analyze"
+                                  : t(uiLanguage, "report_missing_hint")}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })
+                : deps.map((dep, i) => (
+                    <div key={i} style={{
+                      display: "flex", alignItems: "flex-start", gap: 8,
+                      padding: "4px 6px", borderRadius: 4,
+                      background: dep.coverage === "none" ? "#1a0808" : "#0a1a0a",
+                    }}>
+                      <span style={{ fontSize: 12, flexShrink: 0, marginTop: 1 }}>
+                        {dep.coverage === "full" ? "✅" : dep.coverage === "partial" ? "🟡" : "❌"}
+                      </span>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: 11, color: dep.coverage === "none" ? "#e05555" : "#ccc", fontWeight: 500 }}>
+                          {dep.name}
+                          {dep.level === "critical" && (
+                            <span style={{ fontSize: 9, color: "#e05555", marginLeft: 6, verticalAlign: "middle" }}>{t(uiLanguage, "report_dep_required")}</span>
+                          )}
+                        </div>
+                        {dep.coveredBy.length > 0 && (
+                          <div style={{ fontSize: 9, color: "#4ec9b0", marginTop: 1 }}>
+                            → {dep.coveredBy.join(", ")}
+                          </div>
+                        )}
+                        {dep.coverage === "none" && (
+                          <div style={{ fontSize: 9, color: "#666", marginTop: 1 }}>
+                            {t(uiLanguage, "report_missing_hint")}
+                          </div>
+                        )}
+                      </div>
                     </div>
-                    {dep.coveredBy.length > 0 && (
-                      <div style={{ fontSize: 9, color: "#4ec9b0", marginTop: 1 }}>
-                        → {dep.coveredBy.join(", ")}
-                      </div>
-                    )}
-                    {dep.coverage === "none" && (
-                      <div style={{ fontSize: 9, color: "#666", marginTop: 1 }}>
-                        {t(uiLanguage, "report_missing_hint")}
-                      </div>
-                    )}
-                  </div>
-                </div>
-              ))}
+                  ))
+              }
             </div>
-            {report.dependencies.length > 4 && (
+            {(useV2 ? resolvedDeps : deps).length > 4 && (
               <button onClick={() => setExpanded(!expanded)} style={linkBtn}>
-                {expanded ? t(uiLanguage, "report_show_less") : `${t(uiLanguage, "report_show_all")} ${report.dependencies.length}`}
+                {expanded
+                  ? t(uiLanguage, "report_show_less")
+                  : `${t(uiLanguage, "report_show_all")} ${(useV2 ? resolvedDeps : deps).length}`}
               </button>
             )}
             {report.missingDeps.length > 0 && (
@@ -135,23 +247,40 @@ export default function DependencyReport({ report, onExecute, onExecuteRaw, onAp
         justifyContent: "flex-end",
       }}>
         <button onClick={onDismiss} style={ghostBtn}>{t(uiLanguage, "report_cancel")}</button>
-        {!report.matchedSkill && !createdSkillReady && (
-          <button
-            onClick={() => onCreateSkill(report)}
-            disabled={!!creatingSkill}
-            style={secondaryBtn(!!creatingSkill)}
-          >
-            {creatingSkill
-              ? `⟳ ${t(uiLanguage, "report_generating_skill")}`
-              : `✦ ${t(uiLanguage, "report_generate_skill")}`}
-          </button>
+        {!matchedSkill && !createdSkillReady && (
+          creatableSkillDeps.length > 0 && onCreateWithSkillCreator
+            /* Gated: show per-skill creation buttons for process-type missing deps */
+            ? creatableSkillDeps.slice(0, 3).map(dep => (
+                <button
+                  key={dep.dd.id}
+                  onClick={() => onCreateWithSkillCreator(dep)}
+                  disabled={!!installingSkillCreator}
+                  style={secondaryBtn(!!installingSkillCreator)}
+                >
+                  {installingSkillCreator
+                    ? "⬇ Installing…"
+                    : `⚡ Create "${dep.dd.name}"`}
+                </button>
+              ))
+            /* Fallback: no creatable skill deps, or callback not wired — use static template */
+            : (
+                <button
+                  onClick={() => onCreateSkill(report)}
+                  disabled={!!creatingSkill}
+                  style={secondaryBtn(!!creatingSkill)}
+                >
+                  {creatingSkill
+                    ? `⟳ ${t(uiLanguage, "report_generating_skill")}`
+                    : `✦ ${t(uiLanguage, "report_generate_skill")}`}
+                </button>
+              )
         )}
-        {report.matchedSkill && (
+        {matchedSkill && (
           <button onClick={() => onExecuteRaw(report.task)} style={secondaryBtn()}>
             {t(uiLanguage, "report_without_skill")}
           </button>
         )}
-        {!report.matchedSkill && createdSkillReady && (
+        {!matchedSkill && createdSkillReady && (
           <button onClick={() => onExecuteRaw(report.task)} style={secondaryBtn()}>
             {t(uiLanguage, "report_without_skill")}
           </button>
@@ -163,7 +292,7 @@ export default function DependencyReport({ report, onExecute, onExecuteRaw, onAp
         )}
         <button
           onClick={() => {
-            if (!report.matchedSkill && createdSkillReady) {
+            if (!matchedSkill && createdSkillReady) {
               onApplyCreatedSkill(report.task);
               return;
             }
@@ -171,7 +300,7 @@ export default function DependencyReport({ report, onExecute, onExecuteRaw, onAp
           }}
           style={primaryBtn(levelConfig.color)}
         >
-          {report.matchedSkill
+          {matchedSkill
             ? `▶ ${t(uiLanguage, "report_apply_skill")}`
             : createdSkillReady
               ? `▶ ${t(uiLanguage, "report_apply_created_skill")}`

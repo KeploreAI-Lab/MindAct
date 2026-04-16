@@ -2,35 +2,82 @@
  * Task: Full dependency analysis pipeline.
  * Streams progress events (SSE-compatible) to a callback,
  * then returns a structured AnalysisReport.
+ *
+ * v2: Unified pipeline — skill matching and knowledge analysis both produce
+ * ResolvedDependency entries in report.resolved[]. No early-return skill path.
  */
 
 import { join } from "path";
 import { homedir } from "os";
 import { existsSync, readFileSync } from "fs";
-import { aiCall, FAST_MODEL } from "../ai_client";
-import { loadVaultFiles, retrieveContext } from "../graph_retrieval";
-import { parseLinks } from "../build_index";
-import { buildSkillEnrichedPrompt, findBestSkill } from "../skill_matcher";
+import { aiCall, FAST_MODEL } from "../ai_client.ts";
+import { loadVaultFiles, retrieveContext } from "../graph_retrieval.ts";
+import { parseLinks } from "../build_index.ts";
+import { findBestMatch, buildSkillEnrichedPrompt } from "../skill_matcher.ts";
 import {
   getDetectSystem, buildDetectMessage,
   getDecomposeSystem, buildDecomposeMessage,
-  getMatchSystem, buildMatchMessage,
   getFileMatchSystem, buildFileMatchMessage,
   getTemplateSystem, buildTemplateMessage,
   computeConfidence, confidenceLevel,
   buildEnrichedPrompt,
-} from "../prompts/dependency_analysis";
-import { dm, type Lang } from "../i18n";
+  DECOMPOSE_SYSTEM,
+} from "../prompts/dependency_analysis.ts";
+import { dm, type Lang } from "../i18n.ts";
+import {
+  DomainDetectSchema,
+  DependencyArraySchema,
+  FileMatchSchema,
+} from "../manifest_schema.ts";
+import type {
+  AnalysisReport,
+  ResolvedDependency,
+  DecisionDependency,
+  ProgressEvent,
+  ProgressEventType,
+  FileProgressData,
+  HighlightData,
+} from "../types.ts";
+
+// Re-export progress event types from types.ts for consumers
+export type { ProgressEventType, ProgressEvent, FileProgressData, HighlightData };
+
+// ─── Deprecated type re-exports (kept for backward compat) ────────────────────
+
+/**
+ * @deprecated Use ResolvedDependency from decision_manager/types.ts instead.
+ */
+export interface AnalysisDependency {
+  name: string;
+  description: string;
+  level: "critical" | "helpful";
+  coverage: "full" | "partial" | "none";
+  coveredBy: string[];
+}
+
+// Re-export AnalysisReport for consumers that import it from this file
+export type { AnalysisReport };
+
+// ─── Analysis memory ─────────────────────────────────────────────────────────
+
+type AnalysisMemoryItem = {
+  normalizedTask: string;
+  domain: string;
+  deps: { name: string; description: string; level: "critical" | "helpful" }[];
+  ts: number;
+};
+
+const ANALYSIS_MEMORY_MAX = 60;
+const ANALYSIS_MEMORY: AnalysisMemoryItem[] = [];
+
+// ─── Calibration ─────────────────────────────────────────────────────────────
 
 let _calibration: { method: string; temperature: number } | null | undefined;
 function loadCalibration() {
   if (_calibration !== undefined) return _calibration;
   try {
     const p = join(import.meta.dir, "..", "confidence_calibration.json");
-    if (!existsSync(p)) {
-      _calibration = null;
-      return _calibration;
-    }
+    if (!existsSync(p)) { _calibration = null; return _calibration; }
     const raw = JSON.parse(readFileSync(p, "utf-8"));
     if (raw?.method === "temperature_scaling" && Number.isFinite(raw?.temperature)) {
       _calibration = { method: raw.method, temperature: Number(raw.temperature) };
@@ -50,71 +97,32 @@ function applyCalibration(score: number): number {
   return Math.round(Math.min(1, Math.max(0, scaled)) * 100);
 }
 
-// ── Public types ───────────────────────────────────────────────────────────
+// ─── Skill creatability gate ──────────────────────────────────────────────────
+//
+// Determines whether a missing dependency is a good candidate for skill creation
+// (i.e. a reusable process/procedure) vs. static reference material that should
+// be added to the vault instead.  Used to show the "Create with Skill Creator"
+// button only where it makes sense, preventing registry pollution.
 
-export type ProgressEventType = "log" | "highlight" | "ghost" | "report" | "error" | "file_progress";
+const ACTION_VERBS = /\b(calibrat|control|generat|analyz|process|extract|detect|deploy|optimiz|execut|build|train|tuning|classif|convert|transform|compil|synthesi|orchestrat|integrat|automat|evaluat)\w*/i;
+const REF_MATERIAL = /\b(datasheet|spec|manual|document|reference|catalog|table|list|guideline|overview|introduction|survey|report|notes?)\b/i;
 
-export interface FileProgressData {
-  current: number;
-  total: number;
-  fileName: string;
+function isSkillCreatable(dd: DecisionDependency): boolean {
+  // Already typed as a skill in the registry → always offer creation
+  if (dd.type === "skill") return true;
+  const text = `${dd.name} ${dd.description}`;
+  return ACTION_VERBS.test(text) && !REF_MATERIAL.test(dd.name);
 }
 
-export interface ProgressEvent {
-  type: ProgressEventType;
-  data: unknown;
-}
-
-export interface HighlightData {
-  nodes: { id: string; status: "found" | "missing" }[];
-}
-
-export interface AnalysisDependency {
-  name: string;
-  description: string;
-  level: "critical" | "helpful";
-  coverage: "full" | "partial" | "none";
-  coveredBy: string[];  // file names
-}
-
-export interface AnalysisReport {
-  task: string;
-  domain: string;
-  isDomainSpecific: boolean;
-  dependencies: AnalysisDependency[];
-  foundFiles: string[];        // vault file names used
-  missingDeps: string[];       // dependency names with no coverage
-  confidence: number;          // 0-100
-  confidenceLevel: "high" | "medium" | "low";
-  enrichedPrompt: string;      // ready-to-send prompt for Claude Code
-  reasoning?: {
-    multiHopScore: number;     // 0..1
-    brokenCriticalChains: string[];
-  };
-  matchedSkill?: {
-    id: string;
-    name: string;
-    path: string;
-    score: number;
-  } | null;
-}
-
-type AnalysisMemoryItem = {
-  normalizedTask: string;
-  domain: string;
-  deps: { name: string; description: string; level: "critical" | "helpful" }[];
-  ts: number;
-};
-
-const ANALYSIS_MEMORY_MAX = 60;
-const ANALYSIS_MEMORY: AnalysisMemoryItem[] = [];
-
-// ── Main function ──────────────────────────────────────────────────────────
+// ─── Main function ────────────────────────────────────────────────────────────
 
 export async function analyzeDependencies(params: {
   task: string;
   vaultPath: string;
   platformDir?: string;
+  /** Pre-loaded DecisionDependency candidates (replaces skillsDir param). */
+  candidates?: DecisionDependency[];
+  /** @deprecated Use candidates instead. Kept for backward compat. */
   skillsDir?: string;
   lang?: Lang;
   onEvent: (event: ProgressEvent) => void;
@@ -123,7 +131,7 @@ export async function analyzeDependencies(params: {
     task,
     vaultPath,
     platformDir = join(homedir(), ".physmind", "platform"),
-    skillsDir = join(process.cwd(), "skills-test"),
+    candidates = [],
     lang = "en",
     onEvent,
   } = params;
@@ -132,36 +140,17 @@ export async function analyzeDependencies(params: {
   const m = (key: string, vars?: Record<string, string | number>) => dm(lang, key, vars);
 
   try {
-    // ── Stage 0: Skill-first matching (before Knowledge analysis) ─────────
+    // ── Stage 0: Skill scoring (no early return — adds to resolved[]) ─────
     log(m("skill_matching"));
-    const skillMatch = findBestSkill(task, skillsDir);
-    if (skillMatch) {
-      log(m("skill_matched", { name: skillMatch.name }));
-      const report: AnalysisReport = {
-        task,
-        domain: "skill",
-        isDomainSpecific: true,
-        dependencies: [],
-        foundFiles: [],
-        missingDeps: [],
-        confidence: Math.max(75, Math.round(skillMatch.score * 100)),
-        confidenceLevel: "high",
-        enrichedPrompt: buildSkillEnrichedPrompt(task, skillMatch),
-        matchedSkill: {
-          id: skillMatch.id,
-          name: skillMatch.name,
-          path: skillMatch.path,
-          score: skillMatch.score,
-        },
-      };
-      onEvent({ type: "report", data: report });
-      log(m("skill_fast_path"));
-      return report;
+    const skillResult = findBestMatch(task, candidates.filter(c => c.type === "skill"));
+
+    if (skillResult) {
+      log(m("skill_matched", { name: skillResult.dd.name }));
+    } else {
+      log(m("skill_miss"));
     }
-    log(m("skill_miss"));
 
-    // ── Stage 1: Domain detection ──────────────────────────────────────
-
+    // ── Stage 1: Domain detection ─────────────────────────────────────────
     log(m("detecting_task"));
     const detectRaw = await aiCall({
       system: getDetectSystem(lang),
@@ -170,15 +159,18 @@ export async function analyzeDependencies(params: {
       maxTokens: 256,
       temperature: 0,
     });
-    const detect = parseJson(detectRaw) as {
-      is_domain_specific: boolean; domain: string; reason: string;
+    const detectResult = parseJsonWithSchema(detectRaw, DomainDetectSchema, "detect");
+    const detect = {
+      is_domain_specific: detectResult?.is_domain_specific ?? false,
+      domain: detectResult?.domain ?? "",
+      reason: detectResult?.reason ?? "",
     };
 
-    if (!detect.is_domain_specific) {
+    if (!detect.is_domain_specific && !skillResult) {
       log(m("general_task"));
       const report: AnalysisReport = {
         task, domain: "", isDomainSpecific: false,
-        dependencies: [], foundFiles: [], missingDeps: [],
+        resolved: [], foundFiles: [], missingDeps: [],
         confidence: 100, confidenceLevel: "high",
         enrichedPrompt: task,
       };
@@ -186,9 +178,13 @@ export async function analyzeDependencies(params: {
       return report;
     }
 
-    log(m("domain_detected", { domain: detect.domain, reason: detect.reason }));
+    // If task is not domain-specific but we have a skill match, use "skill" domain
+    const domain = detect.is_domain_specific ? detect.domain : "skill";
+    if (detect.is_domain_specific) {
+      log(m("domain_detected", { domain: detect.domain, reason: detect.reason }));
+    }
 
-    // Preload files once for both decomposition hints and matching.
+    // Preload vault files once for both decomposition and matching
     log(m("loading_vault"));
     const allFiles = loadVaultFiles({ vaultPath, platformDir });
     log(m("vault_loaded", {
@@ -197,47 +193,50 @@ export async function analyzeDependencies(params: {
       private: allFiles.filter(f => f.source === "private").length,
     }));
 
-    // ── Stage 2: Decompose dependencies ───────────────────────────────
+    // ── Stage 2: Decompose knowledge dependencies ─────────────────────────
+    // Always run even when skill matched — knowledge deps show up in resolved[]
+    let rawDeps: { name: string; description: string; level: "critical" | "helpful" }[] = [];
 
-    log(m("decomposing"));
-    const normalizedTask = normalizeTask(task);
-    const memoryHit = findSimilarMemory(normalizedTask, detect.domain);
-    let deps: { name: string; description: string; level: "critical" | "helpful" }[] = [];
-    if (memoryHit) {
-      deps = memoryHit.deps;
-      log(m("reusing_memory", { pct: Math.round(memoryHit.similarity * 100) }));
-    } else {
-      const decomposeRaw = await aiCall({
-        system: getDecomposeSystem(lang),
-        messages: [{ role: "user", content: buildDecomposeMessage(task, detect.domain, lang) }],
-        model: FAST_MODEL,
-        maxTokens: 1024,
-        temperature: 0,
-      });
-      console.log("[DM] decompose raw:", decomposeRaw.slice(0, 500));
-      deps = normalizeDependencies((parseJson(decomposeRaw) as any)?.dependencies);
-    }
+    if (detect.is_domain_specific) {
+      log(m("decomposing"));
+      const normalizedTask = normalizeTask(task);
+      const memoryHit = findSimilarMemory(normalizedTask, detect.domain);
 
-    // If LLM returned empty deps, retry once with retrieval-guided hints
-    // instead of immediately falling back to "all files".
-    if (deps.length === 0 && allFiles.length > 0) {
-      const hintFiles = retrieveContext({ query: task, allFiles, topK: 6 }).files;
-      const hints = hintFiles
-        .slice(0, 6)
-        .map(f => `- ${f.name}: ${f.content.replace(/\n+/g, " ").slice(0, 100)}`)
-        .join("\n");
-      log(m("decompose_retry"));
-      const retryRaw = await aiCall({
-        system: DECOMPOSE_SYSTEM,
-        messages: [{
-          role: "user",
-          content: `领域：${detect.domain}
+      if (memoryHit) {
+        rawDeps = memoryHit.deps;
+        log(m("reusing_memory", { pct: Math.round(memoryHit.similarity * 100) }));
+      } else {
+        const decomposeRaw = await aiCall({
+          system: getDecomposeSystem(lang),
+          messages: [{ role: "user", content: buildDecomposeMessage(task, detect.domain, lang) }],
+          model: FAST_MODEL,
+          maxTokens: 1024,
+          temperature: 0,
+        });
+        console.log("[DM] decompose raw:", decomposeRaw.slice(0, 500));
+        const decomposeResult = parseJsonWithSchema(decomposeRaw, DependencyArraySchema, "decompose");
+        rawDeps = decomposeResult?.dependencies ?? [];
+      }
+
+      // Retry once if LLM returned empty deps
+      if (rawDeps.length === 0 && allFiles.length > 0) {
+        const hintFiles = retrieveContext({ query: task, allFiles, topK: 6 }).files;
+        const hints = hintFiles
+          .slice(0, 6)
+          .map(f => `- ${f.name}: ${f.content.replace(/\n+/g, " ").slice(0, 100)}`)
+          .join("\n");
+        log(m("decompose_retry"));
+        const retryRaw = await aiCall({
+          system: DECOMPOSE_SYSTEM,
+          messages: [{
+            role: "user",
+            content: `领域：${detect.domain}
 任务：${task}
 
 以下是与任务高相关的知识文件线索：
 ${hints}
 
-请基于任务与线索，输出 5-10 个“可执行的知识依赖项”。
+请基于任务与线索，输出 5-10 个"可执行的知识依赖项"。
 必须严格输出 JSON，格式如下：
 {
   "dependencies": [
@@ -246,65 +245,69 @@ ${hints}
 }
 要求：
 1) 至少 3 个 critical；
-2) name 不能是空泛词（如“机器人知识”“医学知识”）；
+2) name 不能是空泛词（如"机器人知识""医学知识"）；
 3) 若仍无法判断，也必须给出你能确定的最小依赖集。`,
-        }],
-        model: FAST_MODEL,
-        maxTokens: 1024,
-        temperature: 0,
-      });
-      console.log("[DM] decompose retry raw:", retryRaw.slice(0, 500));
-      deps = normalizeDependencies((parseJson(retryRaw) as any)?.dependencies);
+          }],
+          model: FAST_MODEL,
+          maxTokens: 1024,
+          temperature: 0,
+        });
+        console.log("[DM] decompose retry raw:", retryRaw.slice(0, 500));
+        const retryResult = parseJsonWithSchema(retryRaw, DependencyArraySchema, "decompose-retry");
+        rawDeps = retryResult?.dependencies ?? [];
+      }
+
+      if (rawDeps.length === 0) {
+        log(m("decompose_empty"));
+      } else {
+        log(m("deps_found", { count: rawDeps.length }));
+        rawDeps.forEach(d => log(`  ${d.level === "critical" ? "🔴" : "🟡"} ${d.name}`));
+      }
     }
 
-    if (deps.length === 0) {
-      log(m("decompose_empty"));
-    } else {
-      log(m("deps_found", { count: deps.length }));
-      deps.forEach(d => log(`  ${d.level === "critical" ? "🔴" : "🟡"} ${d.name}`));
+    // ── Stage 3: Match deps to files ──────────────────────────────────────
+    const resolved: ResolvedDependency[] = [];
+
+    // Insert skill match first (if any)
+    if (skillResult) {
+      resolved.push(skillResult);
     }
 
-    // ── Stage 3: Match deps to files ──────────────────────────────────
-
+    // If no vault and no skill, build minimal report
     if (allFiles.length === 0) {
       log(m("vault_empty"));
-      const report = buildEmptyReport(task, detect.domain, deps);
+      const report = buildMinimalReport(task, domain, rawDeps, resolved);
       onEvent({ type: "report", data: report });
       return report;
     }
 
-    log(m("matching_files"));
+    // Build effective dep list for file matching
     const availableFiles = allFiles.map(f => ({
       name: f.name,
       source: f.source,
       snippet: f.content.replace(/\n+/g, " ").slice(0, 120),
     }));
 
-    // If decomposition still failed, synthesize from available files as a last fallback.
-    const effectiveDeps = deps.length > 0 ? deps : availableFiles.map(f => ({
-      name: f.name,
-      description: f.snippet,
-      level: "helpful",
-    }));
+    const effectiveDeps = rawDeps.length > 0
+      ? rawDeps
+      : availableFiles.map(f => ({
+          name: f.name,
+          description: f.snippet,
+          level: "helpful" as const,
+        }));
 
     // Pre-select up to 20 candidate files using retrieveContext
-    const allDepNames = effectiveDeps.map((d: any) => d.name).join(" ");
-    const candidateFiles = retrieveContext({ query: allDepNames, allFiles, topK: 20 }).files;
+    const depQuery = effectiveDeps.map(d => d.name).join(" ");
+    const candidateFiles = retrieveContext({ query: depQuery || task, allFiles, topK: 20 }).files;
 
-    // Analyze files concurrently with immediate per-file progress feedback
+    // Concurrent per-file matching with immediate progress events
     const depCoverage = new Map<string, { covered_by: string[]; coverage: string }>();
     const N = candidateFiles.length;
-    let started = 0;
     const CONCURRENCY = 5;
 
-    // Semaphore: at most CONCURRENCY files in-flight at once
-    // Each file emits progress when it STARTS (not when batch ends) so UI updates immediately
-    const sem = { slots: CONCURRENCY };
-    const queue = [...candidateFiles];
-    const pending: Promise<void>[] = [];
+    log(m("matching_files"));
 
     const runFile = async (cf: typeof candidateFiles[0], idx: number) => {
-      // Emit progress as soon as this file starts
       onEvent({
         type: "file_progress",
         data: { current: idx + 1, total: N, fileName: cf.name } as FileProgressData,
@@ -312,14 +315,15 @@ ${hints}
 
       const fileSnippet = cf.content.replace(/\n+/g, " ").slice(0, 300);
       const fileSource = (allFiles.find(f => f.name === cf.name)?.source ?? "private") as string;
-      let result: { covered?: { dependency: string; coverage: string }[] } = { covered: [] };
+      let covered: { dependency: string; coverage: string }[] = [];
+
       try {
         const raw = await aiCall({
           system: getFileMatchSystem(lang),
           messages: [{
             role: "user",
             content: buildFileMatchMessage(
-              { file: { name: cf.name, source: fileSource, snippet: fileSnippet }, dependencies: effectiveDeps as any },
+              { file: { name: cf.name, source: fileSource, snippet: fileSnippet }, dependencies: effectiveDeps },
               lang
             ),
           }],
@@ -327,10 +331,11 @@ ${hints}
           maxTokens: 256,
           temperature: 0,
         });
-        result = parseJson(raw) as { covered?: { dependency: string; coverage: string }[] };
+        const result = parseJsonWithSchema(raw, FileMatchSchema, `file-match:${cf.name}`);
+        covered = result?.covered ?? [];
       } catch { /* skip on error */ }
 
-      for (const item of result?.covered ?? []) {
+      for (const item of covered) {
         const depName = String(item.dependency ?? "").trim();
         if (!depName || item.coverage === "none") continue;
         const existing = depCoverage.get(depName);
@@ -344,11 +349,9 @@ ${hints}
       }
     };
 
-    // Launch all files, respecting concurrency limit
     await new Promise<void>((resolve) => {
       let inFlight = 0;
       let nextIdx = 0;
-
       const launch = () => {
         while (inFlight < CONCURRENCY && nextIdx < N) {
           const idx = nextIdx++;
@@ -364,21 +367,19 @@ ${hints}
       launch();
     });
 
-    // Build matches array in the same shape as before
-    const rawMatches = (effectiveDeps as any[]).map((dep: any) => {
-      const cov = depCoverage.get(dep.name);
-      return {
-        dependency: dep.name,
-        level: dep.level ?? "helpful",
-        covered_by: cov?.covered_by ?? [],
-        coverage: cov?.coverage ?? "none",
-      };
-    });
+    // Build raw matches from coverage map
+    let rawMatches = effectiveDeps.map(dep => ({
+      dependency: dep.name,
+      level: dep.level ?? "helpful",
+      covered_by: depCoverage.get(dep.name)?.covered_by ?? [],
+      coverage: depCoverage.get(dep.name)?.coverage ?? "none",
+    }));
 
-    let matches = stabilizeMatches(rawMatches, effectiveDeps as any, allFiles);
+    let matches = stabilizeMatches(rawMatches, effectiveDeps, allFiles);
+
     if (matches.length === 0 && effectiveDeps.length > 0) {
       log(m("match_fallback"));
-      matches = effectiveDeps.map((dep: any) => {
+      matches = effectiveDeps.map(dep => {
         const query = `${dep.name} ${dep.description ?? ""}`.trim();
         const ctx = retrieveContext({ query, allFiles, topK: 2 });
         const covered_by = ctx.files.slice(0, 2).map(f => f.name);
@@ -389,14 +390,13 @@ ${hints}
           coverage: covered_by.length > 0 ? "partial" : "none",
         };
       });
-      matches = stabilizeMatches(matches, effectiveDeps as any, allFiles);
+      matches = stabilizeMatches(matches, effectiveDeps, allFiles);
     }
 
-    // ── Stage 5: Compute confidence & build report ─────────────────────
+    // ── Stage 4: Confidence scoring & report building ─────────────────────
 
     const foundFileNames = new Set<string>();
     const missingDeps: string[] = [];
-    const resultDeps: AnalysisDependency[] = [];
 
     for (const mt of matches) {
       const coverage = (mt.coverage ?? "none") as "full" | "partial" | "none";
@@ -410,36 +410,60 @@ ${hints}
         log(m("dep_missing", { dep: mt.dependency }));
       }
 
-      resultDeps.push({
+      // Convert each match to a ResolvedDependency
+      // Look for existing DecisionDependency in candidates, or build a knowledge DD
+      const existingDD = candidates.find(c => c.id === mt.dependency || c.name === mt.dependency);
+      const baseDD: DecisionDependency = existingDD ?? {
+        id: mt.dependency.toLowerCase().replace(/\s+/g, "-"),
+        version: "0.0.0",
+        type: "knowledge",
+        modes: [],
         name: mt.dependency,
-        description: deps.find(d => d.name === mt.dependency)?.description ?? "",
-        level: (mt.level ?? "helpful") as "critical" | "helpful",
-        coverage,
+        description: rawDeps.find(d => d.name === mt.dependency)?.description ?? "",
+        tags: [],
+        domain,
+        source: { type: "local", path: "" },
+        publisher: "",
+        visibility: "private",
+        trust: "untrusted",
+        maturity: "L0",
+      };
+      // Tag with creatability hint so UI can gate skill-creator button correctly.
+      // Applied here on the resolved[] DD so DependencyReport has access to it via report.resolved.
+      const knowledgeDD: DecisionDependency = (coverage === "none")
+        ? { ...baseDD, _isSkillCreatable: isSkillCreatable(baseDD) }
+        : baseDD;
+
+      resolved.push({
+        dd: knowledgeDD,
+        coverage: (mt.coverage ?? "none") as "full" | "partial" | "none",
         coveredBy,
+        score: coverage === "full" ? 1 : coverage === "partial" ? 0.5 : 0,
+        matchReason: coverage === "none" ? "Missing — no vault files found" : undefined,
       });
     }
 
-    const evidenceQuality = estimateEvidenceQuality(matches as any, availableFiles as any);
-    const noiseRatio = estimateNoiseRatio(matches as any);
-    const multiHop = estimateMultiHopReasoning(effectiveDeps as any, matches as any, allFiles as any, lang);
+    const evidenceQuality = estimateEvidenceQuality(matches, availableFiles);
+    const noiseRatio = estimateNoiseRatio(matches);
+    const multiHop = estimateMultiHopReasoning(effectiveDeps, matches, allFiles, lang);
     const boostedEvidenceQuality = clamp01(0.75 * evidenceQuality + 0.25 * multiHop.score);
-    const rawConfidence = computeConfidence(matches as any, { evidenceQuality: boostedEvidenceQuality, noiseRatio });
+    const rawConfidence = computeConfidence(matches, { evidenceQuality: boostedEvidenceQuality, noiseRatio });
     const confidence = applyCalibration(rawConfidence);
     const level = confidenceLevel(confidence);
+
     log(m("multihop_score", { pct: Math.round(multiHop.score * 100) }));
     if (multiHop.brokenCriticalChains.length > 0) {
       log(m("broken_chains", { chains: multiHop.brokenCriticalChains.join(lang === "zh" ? "；" : "; ") }));
     }
     log(m("confidence_label", { level: levelLabel(level, lang) }));
 
-    // Emit highlight event for Brain Graph
+    // Highlight event for Brain Graph
     const highlightNodes: { id: string; status: "found" | "missing" }[] = [];
     for (const name of foundFileNames) {
       const file = allFiles.find(f => f.name === name);
       if (file) highlightNodes.push({ id: file.path, status: "found" });
     }
     for (const dep of missingDeps) {
-      // Try to find any file that might be relevant (partial name match)
       const candidate = allFiles.find(f =>
         f.name.toLowerCase().includes(dep.toLowerCase().slice(0, 5))
       );
@@ -449,7 +473,7 @@ ${hints}
     }
     onEvent({ type: "highlight", data: { nodes: highlightNodes } as HighlightData });
 
-    // Emit ghost nodes for missing deps — generate templates in parallel
+    // Ghost nodes for missing deps — generate templates in parallel
     if (missingDeps.length > 0) {
       log(m("generating_templates"));
       const templateEntries = await Promise.all(
@@ -457,7 +481,7 @@ ${hints}
           try {
             const tmpl = await aiCall({
               system: getTemplateSystem(lang),
-              messages: [{ role: "user", content: buildTemplateMessage(name, task, detect.domain, lang) }],
+              messages: [{ role: "user", content: buildTemplateMessage(name, task, domain, lang) }],
               model: FAST_MODEL,
               maxTokens: 800,
               temperature: 0.1,
@@ -472,6 +496,35 @@ ${hints}
       log(m("ghost_marked", { count: missingDeps.length }));
     }
 
+    // Emit skill_request so the UI can prompt the user to contribute missing skills.
+    // Carries the full DecisionDependency for each missing dep (already built in resolved[])
+    // so the contribution panel has rich metadata without extra lookups.
+    if (missingDeps.length > 0) {
+      const missingDDs: DecisionDependency[] = missingDeps.map(name => {
+        const entry = resolved.find(
+          r => r.dd.name === name || r.dd.id === name.toLowerCase().replace(/\s+/g, "-"),
+        );
+        const dd: DecisionDependency = entry?.dd ?? {
+          id: name.toLowerCase().replace(/\s+/g, "-"),
+          version: "0.0.0",
+          type: "knowledge" as const,
+          modes: [],
+          name,
+          description: rawDeps.find(d => d.name === name)?.description ?? "",
+          tags: [],
+          domain,
+          source: { type: "local" as const, path: "" },
+          publisher: "",
+          visibility: "private" as const,
+          trust: "untrusted" as const,
+          maturity: "L0" as const,
+        };
+        // Tag with creatability hint for UI gating (runtime-only, never stored)
+        return { ...dd, _isSkillCreatable: isSkillCreatable(dd) };
+      });
+      onEvent({ type: "skill_request", data: { missing: missingDDs, domain, task } });
+    }
+
     // Build context files for enriched prompt
     log(m("reading_files"));
     const contextFiles: { name: string; source: string; content: string }[] = [];
@@ -482,32 +535,41 @@ ${hints}
       contextFiles.push({ name: file.name, source: file.source, content: file.content });
     }
 
-    const enrichedPrompt = buildEnrichedPrompt({ task, contextFiles, confidence, missingDeps, lang });
+    // Choose enriched prompt: skill prompt takes precedence when skill matched
+    let enrichedPrompt: string;
+    if (skillResult) {
+      enrichedPrompt = buildSkillEnrichedPrompt(task, skillResult.dd, skillResult.score);
+    } else {
+      enrichedPrompt = buildEnrichedPrompt({ task, contextFiles, confidence, missingDeps, lang });
+    }
 
     const report: AnalysisReport = {
       task,
-      domain: detect.domain,
-      isDomainSpecific: true,
-      dependencies: resultDeps,
+      domain,
+      isDomainSpecific: detect.is_domain_specific,
+      resolved,
       foundFiles: [...foundFileNames],
       missingDeps,
-      confidence,
-      confidenceLevel: level,
+      confidence: skillResult ? Math.max(confidence, Math.round(skillResult.score * 100)) : confidence,
+      confidenceLevel: skillResult ? "high" : level,
       enrichedPrompt,
       reasoning: {
         multiHopScore: multiHop.score,
         brokenCriticalChains: multiHop.brokenCriticalChains,
       },
-      matchedSkill: null,
     };
 
     onEvent({ type: "report", data: report });
-    rememberAnalysis({
-      normalizedTask,
-      domain: detect.domain,
-      deps: effectiveDeps as any,
-      ts: Date.now(),
-    });
+
+    if (detect.is_domain_specific) {
+      rememberAnalysis({
+        normalizedTask: normalizeTask(task),
+        domain: detect.domain,
+        deps: rawDeps,
+        ts: Date.now(),
+      });
+    }
+
     log(m("analysis_complete"));
     return report;
 
@@ -522,7 +584,7 @@ ${hints}
   }
 }
 
-// ── Helpers ────────────────────────────────────────────────────────────────
+// ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function parseJson(raw: string): unknown {
   const cleaned = raw
@@ -537,39 +599,56 @@ function parseJson(raw: string): unknown {
   }
 }
 
-function normalizeDependencies(input: unknown): { name: string; description: string; level: "critical" | "helpful" }[] {
-  if (!Array.isArray(input)) return [];
-  return input
-    .map((d: any) => ({
-      name: String(d?.name ?? "").trim(),
-      description: String(d?.description ?? "").trim(),
-      level: String(d?.level ?? "").toLowerCase() === "critical" ? "critical" : "helpful",
-    }))
-    .filter(d => d.name.length > 0);
+function parseJsonWithSchema<T>(raw: string, schema: { safeParse(v: unknown): { success: boolean; data?: T; error?: unknown } }, stage: string): T | null {
+  const parsed = parseJson(raw);
+  const result = schema.safeParse(parsed);
+  if (result.success) return result.data!;
+  console.warn(`[DM] Zod validation failed for stage '${stage}':`, result.error);
+  return null;
 }
 
 function levelLabel(level: "high" | "medium" | "low", lang: Lang = "en"): string {
   return dm(lang, `level_${level}`);
 }
 
-function buildEmptyReport(
+function buildMinimalReport(
   task: string,
   domain: string,
-  deps: { name: string; description: string; level: string }[]
+  deps: { name: string; description: string; level: string }[],
+  resolved: ResolvedDependency[],
 ): AnalysisReport {
+  const missingDeps = deps.map(d => d.name);
+  const missingResolved: ResolvedDependency[] = deps.map(d => ({
+    dd: {
+      id: d.name.toLowerCase().replace(/\s+/g, "-"),
+      version: "0.0.0",
+      type: "knowledge" as const,
+      modes: [],
+      name: d.name,
+      description: d.description,
+      tags: [],
+      domain,
+      source: { type: "local" as const, path: "" },
+      publisher: "",
+      visibility: "private" as const,
+      trust: "untrusted" as const,
+      maturity: "L0" as const,
+    },
+    coverage: "none" as const,
+    coveredBy: [],
+    score: 0,
+  }));
+
   return {
-    task, domain, isDomainSpecific: true,
-    dependencies: deps.map(d => ({
-      name: d.name, description: d.description,
-      level: d.level as "critical" | "helpful",
-      coverage: "none", coveredBy: [],
-    })),
+    task,
+    domain,
+    isDomainSpecific: true,
+    resolved: [...resolved, ...missingResolved],
     foundFiles: [],
-    missingDeps: deps.map(d => d.name),
-    confidence: 0,
-    confidenceLevel: "low",
+    missingDeps,
+    confidence: resolved.length > 0 ? Math.round(resolved[0].score * 100) : 0,
+    confidenceLevel: resolved.length > 0 ? "high" : "low",
     enrichedPrompt: task,
-    matchedSkill: null,
   };
 }
 
@@ -596,7 +675,7 @@ function estimateEvidenceQuality(
       count++;
     }
   }
-  if (count === 0) return 0.4; // conservative default when no evidence linked
+  if (count === 0) return 0.4;
   return Math.max(0, Math.min(1, sum / count));
 }
 
@@ -740,20 +819,19 @@ function stabilizeMatches(
   deps: { name: string; level: string; description?: string }[],
   allFiles: { name: string; content: string; source: "platform" | "private"; path: string }[]
 ): { dependency: string; level: string; covered_by: string[]; coverage: "full" | "partial" | "none" }[] {
-  const byDep = new Map<string, { dependency: string; level: string; covered_by: string[]; coverage: string }>();
+  const byDep = new Map<string, typeof rawMatches[0]>();
   for (const m of rawMatches) {
     const dep = String(m.dependency ?? "").trim();
     if (!dep) continue;
     byDep.set(dep, m);
   }
-  const out = deps.map((d) => {
+  const out = deps.map(d => {
     const m = byDep.get(d.name);
     if (m) {
       const uniq = Array.from(new Set((m.covered_by ?? []).filter(Boolean))).sort();
       const cov = normalizeCoverage(m.coverage, uniq.length);
       return { dependency: d.name, level: d.level, covered_by: uniq, coverage: cov };
     }
-    // Deterministic fallback for missing dep entries from LLM.
     const ctx = retrieveContext({ query: `${d.name} ${d.description ?? ""}`.trim(), allFiles, topK: 2 });
     const covered_by = Array.from(new Set(ctx.files.map(f => f.name))).sort();
     return {

@@ -314,3 +314,19 @@ export const DETECT_SYSTEM = DETECT_SYSTEM_ZH;
 export const DECOMPOSE_SYSTEM = DECOMPOSE_SYSTEM_ZH;
 export const MATCH_SYSTEM = MATCH_SYSTEM_ZH;
 export const TEMPLATE_SYSTEM = TEMPLATE_SYSTEM_ZH;
+
+// Re-export Zod schemas for LLM output validation (used in tasks/dependency_analysis.ts)
+export {
+  DomainDetectSchema,
+  DependencyArraySchema,
+  FileMatchSchema,
+  BatchMatchSchema,
+  ManifestSchema,
+} from "../manifest_schema.ts";
+export type {
+  DomainDetectResult,
+  DependencyItem,
+  FileCoverageItem,
+  BatchMatchItem,
+  Manifest,
+} from "../manifest_schema.ts";
