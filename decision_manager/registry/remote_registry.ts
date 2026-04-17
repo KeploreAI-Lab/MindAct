@@ -12,6 +12,7 @@ export class RemoteRegistry implements DecisionDependencyRegistry {
   constructor(
     private baseUrl: string,
     private token?: string,
+    private userToken?: string,   // mact_xxx — sent as X-User-Token for user-scoped visibility
   ) {}
 
   async list(filter?: RegistryFilter): Promise<DecisionDependency[]> {
@@ -100,6 +101,7 @@ export class RemoteRegistry implements DecisionDependencyRegistry {
       ...((init?.headers as Record<string, string>) ?? {}),
     };
     if (this.token) headers["Authorization"] = `Bearer ${this.token}`;
+    if (this.userToken) headers["X-User-Token"] = this.userToken;
     return fetch(url, { ...init, headers });
   }
 }

@@ -47,6 +47,32 @@ function Terminal() {
 
   const [installingSkillCreator, setInstallingSkillCreator] = useState(false);
 
+  // /auth & /login — MindAct account sign-in flow
+  const authPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const openAuthFlow = useCallback(() => {
+    const w = window.open("http://localhost:3001/auth", "mindact-auth", "width=480,height=620,noopener");
+    if (!w) {
+      // Popup blocked — show banner with manual link
+      setTerminalBanner("! http://localhost:3001/auth");
+      return;
+    }
+    if (authPollRef.current) clearInterval(authPollRef.current);
+    authPollRef.current = setInterval(async () => {
+      if (!w.closed) return;
+      if (authPollRef.current) clearInterval(authPollRef.current);
+      // Window closed — check if token was saved
+      try {
+        const res = await fetch("/api/config");
+        const cfg = await res.json();
+        if (cfg?.account_token) {
+          setTerminalBanner("✓ Signed in to MindAct — Decision Dependencies will sync automatically across devices");
+        }
+      } catch {}
+    }, 600);
+    // Safety: stop polling after 5 min
+    setTimeout(() => { if (authPollRef.current) clearInterval(authPollRef.current); }, 300_000);
+  }, [setTerminalBanner]);
+
   const [splashVisible, setSplashVisible] = useState(true);
   const [splashFading, setSplashFading] = useState(false);
 
@@ -341,6 +367,12 @@ function Terminal() {
       e.preventDefault();
       const val = inputValue.trim();
       if (val) {
+        // Intercept /auth and /login — open MindAct registry sign-in
+        if (val === "/auth" || val === "/login") {
+          openAuthFlow();
+          setInputValue("");
+          return;
+        }
         if (analysisModeRef.current && !analysisRunningRef.current) {
           // Intercept: run dependency analysis before sending to Claude
           runDependencyAnalysis(val);
@@ -566,6 +598,14 @@ function Terminal() {
     if (term) { term.clear(); }
     if (wsRef.current?.readyState === WebSocket.OPEN) {
       wsRef.current.send(JSON.stringify({ type: "restart" }));
+      // ws.onopen won't fire again since the WebSocket stays open during restart.
+      // Send resize immediately so the new pty-worker spawns physmind at the correct
+      // terminal dimensions instead of the 120×40 fallback (which causes garbled output).
+      const fit = fitAddonRef.current;
+      if (fit && term) {
+        fit.fit();
+        wsRef.current.send(JSON.stringify({ type: "resize", cols: term.cols, rows: Math.max(5, term.rows) }));
+      }
     } else {
       connect();
     }
@@ -661,6 +701,7 @@ function Terminal() {
       if (thinkingTimerRef.current) clearTimeout(thinkingTimerRef.current);
       if (cleanResizeTimerRef.current) clearTimeout(cleanResizeTimerRef.current);
       if (hideSplashTimeoutRef.current) clearTimeout(hideSplashTimeoutRef.current);
+      if (authPollRef.current) clearInterval(authPollRef.current);
       if (wsRef.current) wsRef.current.close();
       setScrollToTerminalLine(null);
     };

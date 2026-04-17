@@ -1,5 +1,5 @@
 import { serve } from "bun";
-import { existsSync, mkdirSync, readdirSync, statSync, readFileSync, writeFileSync, unlinkSync } from "fs";
+import { existsSync, mkdirSync, readdirSync, rmSync, statSync, readFileSync, writeFileSync, unlinkSync } from "fs";
 import { join, extname, relative, basename } from "path";
 import { homedir } from "os";
 import { buildIndex, collectMdFiles, parseLinks, BRAIN_INDEX_PATH } from "./decision_manager/build_index";
@@ -29,6 +29,10 @@ interface Config {
   panel_ratio: number;
   /** Optional: URL for the remote Cloudflare Workers registry. Absent = local-only mode. */
   registry_url?: string;
+  /** Optional: MindAct user account token (mact_xxx) for private registry sync. */
+  account_token?: string;
+  /** Optional: Admin UI URL override (for auth redirect flow). */
+  admin_url?: string;
 }
 
 function slugifySkillName(name: string): string {
@@ -164,24 +168,28 @@ function loadSkillCreatorReference(skillsRoot: string): string {
 // Callers should fire-and-forget with .catch() since cloud unavailability
 // must never break local save operations.
 
-const DEFAULT_REGISTRY_URL = "https://mindact-registry.marvin-gao-cs.workers.dev";
+const DEFAULT_REGISTRY_URL = "https://registry.physical-mind.ai";
 
 async function publishToCloud(dd: DecisionDependency, content: string, cfg: Config | null): Promise<void> {
   const registryUrl =
     (cfg as any)?.registry_url ??
     process.env.MINDACT_REGISTRY_URL ??
     DEFAULT_REGISTRY_URL;
-  const remote = new RemoteRegistry(registryUrl, (cfg as any)?.registry_token);
+  // Prefer user account_token (sets owner_user_id), fall back to admin registry_token
+  const authToken = (cfg as any)?.account_token ?? (cfg as any)?.registry_token;
+  const remote = new RemoteRegistry(registryUrl, authToken);
+  // Ensure user-published skills are private by default
+  const ddToPublish: DecisionDependency = { ...dd, visibility: dd.visibility ?? "private" };
   // Publish metadata → lands as status:"pending" for non-admin publishers
-  await remote.publish(dd);
+  await remote.publish(ddToPublish);
   // Build ZIP with SKILL.md + manifest
   const AdmZip = createRequire(import.meta.url)("adm-zip");
   const zip = new AdmZip();
   zip.addFile("SKILL.md", Buffer.from(content, "utf-8"));
-  zip.addFile("manifest.json", Buffer.from(JSON.stringify(dd, null, 2), "utf-8"));
+  zip.addFile("manifest.json", Buffer.from(JSON.stringify(ddToPublish, null, 2), "utf-8"));
   const buf: Buffer = zip.toBuffer();
   await remote.uploadPackage(
-    dd.id, dd.version,
+    ddToPublish.id, ddToPublish.version,
     buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength) as ArrayBuffer,
     content,
   );
@@ -212,7 +220,12 @@ function normalizeConfig(raw: any): Config | null {
   const project_path = String(raw.project_path ?? "").trim();
   const skills_path = String(raw.skills_path ?? "").trim();
   const panel_ratio = Number.isFinite(raw.panel_ratio) ? Number(raw.panel_ratio) : 0.45;
-  return { vault_path, project_path, skills_path, panel_ratio };
+  const config: Config = { vault_path, project_path, skills_path, panel_ratio };
+  // Preserve optional fields
+  if (raw.registry_url) config.registry_url = String(raw.registry_url);
+  if (raw.account_token) config.account_token = String(raw.account_token);
+  if (raw.admin_url) config.admin_url = String(raw.admin_url);
+  return config;
 }
 
 function readConfig(): Config | null {
@@ -228,6 +241,22 @@ function readConfig(): Config | null {
 function writeConfig(config: Config) {
   if (!existsSync(CONFIG_DIR)) mkdirSync(CONFIG_DIR, { recursive: true });
   writeFileSync(CONFIG_FILE, JSON.stringify(config, null, 2));
+}
+
+// Remove skills that were synced from the cloud (identified by .cloud-stub marker).
+// Locally-created skills (no .cloud-stub) are preserved.
+function removeCloudSkills(skillsRoot: string): void {
+  try {
+    for (const entry of readdirSync(skillsRoot, { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue;
+      const dir = join(skillsRoot, entry.name);
+      if (existsSync(join(dir, ".cloud-stub"))) {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    }
+  } catch (e) {
+    console.warn("[logout] removeCloudSkills failed:", e instanceof Error ? e.message : e);
+  }
 }
 
 function saveKplrCredentials(key: string) {
@@ -345,6 +374,255 @@ function corsHeaders() {
     "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
     "Access-Control-Allow-Headers": "Content-Type",
   };
+}
+
+function buildAuthHtml(registryUrl: string, callbackUrl: string): string {
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MindAct — Sign In</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:system-ui,-apple-system,sans-serif;background:#0d0d14;color:#ccc;
+  display:flex;align-items:center;justify-content:center;min-height:100vh;padding:24px}
+.card{background:#111118;border:1px solid #2a2a2a;border-radius:10px;padding:32px 36px;width:420px;max-width:100%}
+.logo{text-align:center;margin-bottom:24px}
+.logo-icon{font-size:32px;margin-bottom:6px}
+.logo-title{font-size:16px;font-weight:700;color:#ccc}
+.logo-sub{font-size:11px;color:#444;margin-top:4px;word-break:break-all}
+.tabs{display:flex;border-bottom:1px solid #222;margin-bottom:24px}
+.tab{flex:1;padding:9px 0;background:none;border:none;border-bottom:2px solid transparent;
+  color:#555;cursor:pointer;font-size:12px;font-weight:400;transition:all .1s}
+.tab.active{border-bottom-color:#4ec9b0;color:#4ec9b0;font-weight:700}
+label{font-size:10px;color:#555;display:block;margin-bottom:4px;text-transform:uppercase;letter-spacing:.5px}
+input{width:100%;background:#1a1a24;border:1px solid #333;border-radius:4px;color:#d4d4d4;
+  padding:8px 10px;font-size:12px;outline:none;margin-bottom:12px}
+input:focus{border-color:#4ec9b055}
+.btn{width:100%;background:#0a2a20;border:1px solid #4ec9b088;border-radius:4px;
+  color:#4ec9b0;cursor:pointer;font-size:12px;padding:9px 0;font-weight:700;margin-top:4px}
+.btn:disabled{opacity:.6;cursor:default}
+.btn-sec{background:#1a1a2a;border-color:#333;color:#888}
+.err{padding:7px 12px;background:#2a0808;border:1px solid #e0555544;border-radius:4px;
+  font-size:11px;color:#e05555;margin-bottom:12px}
+.ok{padding:7px 12px;background:#082a1a;border:1px solid #4ec9b044;border-radius:4px;
+  font-size:11px;color:#4ec9b0;margin-bottom:12px}
+.token-box{background:#0d0d14;border:1px solid #4ec9b044;border-radius:6px;
+  padding:14px 16px;margin-bottom:16px;text-align:center}
+.token-label{font-size:9px;color:#444;margin-bottom:6px;text-transform:uppercase;letter-spacing:.5px}
+.token-text{font-family:monospace;font-size:11px;color:#4ec9b0;word-break:break-all;letter-spacing:.05em}
+.row{display:flex;gap:8px}
+.note{font-size:10px;color:#444;text-align:center;margin-top:10px}
+.otp-input{letter-spacing:.3em;font-size:16px;text-align:center;font-family:monospace}
+hr{border:none;border-top:1px solid #1a1a1a;margin:20px 0}
+a{font-size:10px;color:#333;display:block;text-align:center;text-decoration:none}
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="logo">
+    <div class="logo-icon">🧠</div>
+    <div class="logo-title">MindAct Account</div>
+    <div class="logo-sub">${registryUrl.replace("https://","")}</div>
+  </div>
+
+  <div class="tabs">
+    <button class="tab active" onclick="showTab('register',this)">Register</button>
+    <button class="tab" onclick="showTab('retrieve',this)">Retrieve Token</button>
+  </div>
+
+  <!-- Register tab -->
+  <div id="tab-register">
+    <div id="reg-err" class="err" style="display:none"></div>
+    <div id="reg-done" style="display:none">
+      <div class="token-box">
+        <div class="token-label">Your Account Token — save it now</div>
+        <div class="token-text" id="reg-token"></div>
+      </div>
+      <div class="row">
+        <button class="btn" style="flex:1" onclick="copyToken('reg-token',this)">Copy Token</button>
+        <button class="btn btn-sec" style="flex:1" id="reg-return" onclick="returnToApp()">Return to MindAct →</button>
+      </div>
+      <div class="note">Store this token safely. You can retrieve a new one via email verification at any time.</div>
+    </div>
+    <div id="reg-form">
+      <label>Email address</label>
+      <input id="reg-email" type="email" placeholder="you@example.com" onkeydown="if(event.key==='Enter')doRegister()">
+      <label>Username (optional)</label>
+      <input id="reg-username" type="text" placeholder="your-handle">
+      <button class="btn" onclick="doRegister()" id="reg-btn">Create Account & Get Token</button>
+    </div>
+  </div>
+
+  <!-- Retrieve tab -->
+  <div id="tab-retrieve" style="display:none">
+    <div id="ret-err" class="err" style="display:none"></div>
+    <div id="ret-info" class="ok" style="display:none"></div>
+    <div id="ret-done" style="display:none">
+      <div class="token-box">
+        <div class="token-label">Your New Account Token</div>
+        <div class="token-text" id="ret-token"></div>
+      </div>
+      <div class="row">
+        <button class="btn" style="flex:1" onclick="copyToken('ret-token',this)">Copy Token</button>
+        <button class="btn btn-sec" style="flex:1" onclick="returnToApp()">Return to MindAct →</button>
+      </div>
+      <div class="note">Your previous token has been invalidated.</div>
+    </div>
+    <div id="ret-email-form">
+      <label>Email address</label>
+      <input id="ret-email" type="email" placeholder="you@example.com" onkeydown="if(event.key==='Enter')doSendOtp()">
+      <button class="btn" onclick="doSendOtp()" id="otp-btn">Send Verification Code</button>
+    </div>
+    <div id="ret-otp-form" style="display:none">
+      <div style="font-size:11px;color:#888;margin-bottom:12px">
+        A 6-digit code was sent to <strong id="ret-email-display" style="color:#ccc"></strong>. Enter it below.
+      </div>
+      <label>Verification Code</label>
+      <input id="ret-otp" type="text" class="otp-input" placeholder="123456" maxlength="6"
+        oninput="this.value=this.value.replace(/\\D/g,'').slice(0,6)"
+        onkeydown="if(event.key==='Enter')doVerifyOtp()">
+      <div class="row">
+        <button class="btn btn-sec" style="flex:0 0 80px" onclick="showOtpEmailForm()">← Back</button>
+        <button class="btn" style="flex:1" onclick="doVerifyOtp()" id="verify-btn">Verify & Get Token</button>
+      </div>
+      <button onclick="doSendOtp()" style="background:none;border:none;color:#444;cursor:pointer;
+        font-size:10px;margin-top:10px;width:100%;text-align:center">Resend code</button>
+    </div>
+  </div>
+
+  <hr>
+  <a href="javascript:window.close()">Close this window</a>
+</div>
+
+<script>
+const REGISTRY = ${JSON.stringify(registryUrl)};
+const CALLBACK = ${JSON.stringify(callbackUrl)};
+let _token = null;
+
+function showTab(name, el) {
+  document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
+  el.classList.add('active');
+  ['register','retrieve'].forEach(t=>{
+    document.getElementById('tab-'+t).style.display = t===name?'block':'none';
+  });
+}
+
+function setErr(id, msg) {
+  const el = document.getElementById(id);
+  el.textContent = msg;
+  el.style.display = msg ? 'block' : 'none';
+}
+function setInfo(id, msg) {
+  const el = document.getElementById(id);
+  el.textContent = msg;
+  el.style.display = msg ? 'block' : 'none';
+}
+
+function copyToken(tokenId, btn) {
+  const text = document.getElementById(tokenId).textContent;
+  navigator.clipboard.writeText(text).then(()=>{
+    btn.textContent = '✓ Copied!';
+    setTimeout(()=>{ btn.textContent = 'Copy Token'; }, 2000);
+  });
+}
+
+function returnToApp() {
+  if (_token) {
+    window.location.href = CALLBACK + '?token=' + encodeURIComponent(_token);
+  }
+}
+
+async function doRegister() {
+  const email = document.getElementById('reg-email').value.trim().toLowerCase();
+  const username = document.getElementById('reg-username').value.trim();
+  if (!email) { setErr('reg-err','Email is required'); return; }
+  const btn = document.getElementById('reg-btn');
+  btn.disabled = true; btn.textContent = 'Creating account…';
+  setErr('reg-err','');
+  try {
+    const res = await fetch(REGISTRY+'/auth/register',{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({email, username: username||undefined})
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error||'HTTP '+res.status);
+    _token = data.token;
+    document.getElementById('reg-token').textContent = data.token;
+    document.getElementById('reg-form').style.display = 'none';
+    document.getElementById('reg-done').style.display = 'block';
+    // Auto-return after 500ms if callback URL is set
+    setTimeout(returnToApp, 500);
+  } catch(e) {
+    setErr('reg-err', e.message);
+    btn.disabled=false; btn.textContent='Create Account & Get Token';
+  }
+}
+
+async function doSendOtp() {
+  const email = document.getElementById('ret-email').value.trim().toLowerCase();
+  if (!email) { setErr('ret-err','Email is required'); return; }
+  const btn = document.getElementById('otp-btn');
+  btn.disabled=true; btn.textContent='Sending code…';
+  setErr('ret-err',''); setInfo('ret-info','');
+  try {
+    const res = await fetch(REGISTRY+'/auth/send-otp',{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({email})
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error||'HTTP '+res.status);
+    document.getElementById('ret-email-display').textContent = email;
+    document.getElementById('ret-email-form').style.display='none';
+    document.getElementById('ret-otp-form').style.display='block';
+    setInfo('ret-info', data.message||'Check your email for a 6-digit code.');
+  } catch(e) {
+    setErr('ret-err',e.message);
+    btn.disabled=false; btn.textContent='Send Verification Code';
+  }
+}
+
+function showOtpEmailForm() {
+  document.getElementById('ret-email-form').style.display='block';
+  document.getElementById('ret-otp-form').style.display='none';
+  document.getElementById('ret-otp').value='';
+  setErr('ret-err',''); setInfo('ret-info','');
+  const btn = document.getElementById('otp-btn');
+  btn.disabled=false; btn.textContent='Send Verification Code';
+}
+
+async function doVerifyOtp() {
+  const email = document.getElementById('ret-email').value.trim().toLowerCase();
+  const otp = document.getElementById('ret-otp').value.trim();
+  if (otp.length!==6) { setErr('ret-err','Enter the 6-digit code'); return; }
+  const btn = document.getElementById('verify-btn');
+  btn.disabled=true; btn.textContent='Verifying…';
+  setErr('ret-err','');
+  try {
+    const res = await fetch(REGISTRY+'/auth/verify-otp',{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({email, otp})
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error||'HTTP '+res.status);
+    _token = data.token;
+    document.getElementById('ret-token').textContent = data.token;
+    document.getElementById('ret-otp-form').style.display='none';
+    document.getElementById('ret-info').style.display='none';
+    document.getElementById('ret-done').style.display='block';
+    setTimeout(returnToApp, 500);
+  } catch(e) {
+    setErr('ret-err',e.message);
+    btn.disabled=false; btn.textContent='Verify & Get Token';
+  }
+}
+</script>
+</body>
+</html>`;
 }
 
 function jsonResponse(data: unknown, status = 200) {
@@ -483,6 +761,80 @@ const server = serve({
     // Registry routes (/api/registry/*)
     const registryRes = await handleRegistry(req, url, { onSkillInstalled });
     if (registryRes) return registryRes;
+
+    // ── GET /auth — serve standalone auth page (register / retrieve token) ─────
+    if (url.pathname === "/auth" && req.method === "GET") {
+      const registryUrl = readConfig()?.registry_url ?? "https://registry.physical-mind.ai";
+      const callbackUrl = `http://localhost:${PORT}/auth/callback`;
+      const authHtml = buildAuthHtml(registryUrl, callbackUrl);
+      return new Response(authHtml, {
+        headers: { "Content-Type": "text/html; charset=utf-8", ...corsHeaders() },
+      });
+    }
+
+    // ── GET /auth/callback — receives token from browser auth flow ────────────
+    if (url.pathname === "/auth/callback" && req.method === "GET") {
+      const token = url.searchParams.get("token");
+      if (token && token.startsWith("mact_")) {
+        // Merge token into existing config
+        const existing = readConfig();
+        const merged: Config = {
+          vault_path: existing?.vault_path ?? "",
+          project_path: existing?.project_path ?? "",
+          skills_path: existing?.skills_path ?? "",
+          panel_ratio: existing?.panel_ratio ?? 0.45,
+          registry_url: existing?.registry_url,
+          admin_url: existing?.admin_url,
+          account_token: token,
+        };
+        writeConfig(merged);
+      }
+      // Return a self-closing HTML page
+      const html = `<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><title>MindAct — Signed In</title>
+<style>body{font-family:system-ui,sans-serif;background:#0d0d14;color:#ccc;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;flex-direction:column;gap:12px;}
+h2{color:#4ec9b0;margin:0;}p{color:#666;font-size:13px;margin:0;}</style></head>
+<body>
+<div style="font-size:40px">🧠</div>
+<h2>Account token saved!</h2>
+<p>You can close this tab and return to MindAct.</p>
+<script>setTimeout(()=>window.close(),2000);</script>
+</body></html>`;
+      return new Response(html, {
+        headers: { "Content-Type": "text/html; charset=utf-8", ...corsHeaders() },
+      });
+    }
+
+    // ── GET /api/registry/me — proxy to worker /auth/me ───────────────────────
+    if (url.pathname === "/api/registry/me" && req.method === "GET") {
+      const config = readConfig();
+      if (!config?.account_token) return jsonResponse({ error: "Not signed in" }, 401);
+      const registryUrl = config.registry_url ?? "https://registry.physical-mind.ai";
+      try {
+        const res = await fetch(`${registryUrl.replace(/\/$/, "")}/auth/me`, {
+          headers: { "Authorization": `Bearer ${config.account_token}` },
+        });
+        const data = await res.json();
+        return jsonResponse(data, res.status);
+      } catch {
+        return jsonResponse({ error: "Registry unreachable" }, 503);
+      }
+    }
+
+    // ── POST /api/auth/logout — clear token + remove cloud-synced skills ──────
+    if (url.pathname === "/api/auth/logout" && req.method === "POST") {
+      const cfg = readConfig();
+      if (cfg) {
+        if (cfg.skills_path && existsSync(cfg.skills_path)) {
+          removeCloudSkills(cfg.skills_path);
+          syncSkillsToPhysmind(cfg.skills_path);
+        }
+        const { account_token: _removed, ...rest } = cfg;
+        writeConfig(rest as Config);
+      }
+      return jsonResponse({ ok: true });
+    }
 
     // API routes
     if (url.pathname === "/api/config") {
@@ -1105,6 +1457,7 @@ console.log(`MindAct server running at http://localhost:${PORT}`);
 
 // Sync published cloud skills as SKILL.md stubs at startup (non-blocking).
 // This makes cloud skills visible to the PhysMind agent without a full install.
+// Also auto-uploads all locally-created skills if user is signed in.
 (async () => {
   const cfg = readConfig();
   if (!cfg) return;
@@ -1112,8 +1465,44 @@ console.log(`MindAct server running at http://localhost:${PORT}`);
   const registryUrl =
     cfg.registry_url ??
     process.env.MINDACT_REGISTRY_URL ??
-    "https://mindact-registry.marvin-gao-cs.workers.dev";
-  await syncCloudSkillStubs(registryUrl, skillsRoot, (cfg as any).registry_token);
+    "https://registry.physical-mind.ai";
+  // Pass account_token so user's private skills are included in the stub list
+  const userToken = (cfg as any).account_token ?? (cfg as any).registry_token;
+  await syncCloudSkillStubs(registryUrl, skillsRoot, userToken);
+
+  // Auto-upload all locally-created skills to cloud when user is signed in
+  if ((cfg as any).account_token && existsSync(skillsRoot)) {
+    let uploaded = 0;
+    for (const entry of readdirSync(skillsRoot, { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue;
+      const dir = join(skillsRoot, entry.name);
+      // Skip cloud stubs — they came from the cloud, not locally created
+      if (existsSync(join(dir, ".cloud-stub"))) continue;
+      const skillMdPath = join(dir, "SKILL.md");
+      if (!existsSync(skillMdPath)) continue;
+      try {
+        const content = readFileSync(skillMdPath, "utf-8");
+        const ddFilePath = join(dir, "decision-dependency.yaml");
+        let dd: DecisionDependency;
+        if (existsSync(ddFilePath)) {
+          dd = yaml.load(readFileSync(ddFilePath, "utf-8")) as DecisionDependency;
+        } else {
+          dd = {
+            id: entry.name, name: entry.name, version: "1.0.0",
+            type: "skill", modes: ["generator"], tags: [], domain: "general",
+            source: { type: "local", path: dir },
+            publisher: "user", visibility: "private", trust: "untrusted", maturity: "L1",
+            installedAt: new Date().toISOString(),
+          };
+        }
+        await publishToCloud(dd, content, cfg);
+        uploaded++;
+      } catch (e) {
+        console.warn(`[startup-sync] failed to upload ${entry.name}:`, e instanceof Error ? e.message : e);
+      }
+    }
+    if (uploaded > 0) console.log(`[startup-sync] uploaded ${uploaded} local skill(s) to cloud`);
+  }
 })();
 
 // Auto-update @keploreai/physmind on startup (non-blocking)

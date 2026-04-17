@@ -13,7 +13,7 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.82.0",
-    "@keploreai/physmind": "^1.0.9",
+    "@keploreai/physmind": "^1.0.11",
     "adm-zip": "^0.5.17",
     "js-yaml": "^4.1.1",
     "node-pty": "^1.0.0",

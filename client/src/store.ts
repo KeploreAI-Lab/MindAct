@@ -11,6 +11,9 @@ export interface Config {
   panel_ratio: number;
   kplr_token?: string;
   minimax_token?: string;
+  account_token?: string;   // mact_xxx — MindAct user token for registry sync
+  registry_url?: string;    // Override default registry URL
+  admin_url?: string;       // Override default admin UI URL (for auth redirect)
 }
 
 export interface TreeNode {

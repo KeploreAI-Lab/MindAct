@@ -33,12 +33,13 @@ const CONFIG_FILE = join(homedir(), ".physmind", "config.json");
 // Override at runtime via MINDACT_REGISTRY_URL env var.
 const DEFAULT_REGISTRY_URL =
   process.env.MINDACT_REGISTRY_URL ??
-  "https://mindact-registry.marvin-gao-cs.workers.dev";
+  "https://registry.physical-mind.ai";
 
 interface RegistryConfig {
   skills_path?: string;
   registry_url?: string;
   registry_token?: string;
+  account_token?: string;   // mact_xxx user token — forwarded as X-User-Token
 }
 
 function readRegistryConfig(): RegistryConfig {
@@ -150,7 +151,9 @@ export async function handleRegistry(
   const cfg = readRegistryConfig();
   const skillsDir = cfg.skills_path || defaultSkillsRoot();
   const registryUrl = cfg.registry_url || DEFAULT_REGISTRY_URL;
-  const remote = new RemoteRegistry(registryUrl, cfg.registry_token);
+  // Pass user token as third arg so RemoteRegistry sends X-User-Token header,
+  // enabling private/org package visibility for authenticated users.
+  const remote = new RemoteRegistry(registryUrl, cfg.registry_token, cfg.account_token);
 
   // ── GET /api/registry/status ───────────────────────────────────────────────
   if (url.pathname === "/api/registry/status" && req.method === "GET") {

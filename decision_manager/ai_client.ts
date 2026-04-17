@@ -142,8 +142,8 @@ export async function aiCall(opts: AiCallOptions): Promise<string> {
       model: toMinimaxModel(model), max_tokens: maxTokens, temperature: opts.temperature,
       system: opts.system, messages: opts.messages,
     });
-    const block = response.content[0];
-    if (block.type !== "text") throw new Error("Unexpected response type: " + block.type);
+    const block = response.content.find(b => b.type === "text");
+    if (!block || block.type !== "text") throw new Error("No text block in response");
     return block.text;
   }
 
@@ -159,8 +159,8 @@ export async function aiCall(opts: AiCallOptions): Promise<string> {
     model, max_tokens: maxTokens, temperature: opts.temperature,
     system: opts.system, messages: opts.messages,
   });
-  const block = response.content[0];
-  if (block.type !== "text") throw new Error("Unexpected response type: " + block.type);
+  const block = response.content.find(b => b.type === "text");
+  if (!block || block.type !== "text") throw new Error("No text block in response");
   return block.text;
 }
 

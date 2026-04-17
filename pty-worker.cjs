@@ -33,6 +33,28 @@ const path = require('path');
 
 const cwd = process.env.PTY_CWD || process.cwd();
 
+// Dynamically extract MACRO.VERSION from the installed physmind CLI so the
+// version replacement survives physmind auto-updates.
+function getPhysmindMacroVersion() {
+  try {
+    const cliPath = require.resolve('@keploreai/physmind/dist/cli.js');
+    const content = fs.readFileSync(cliPath, 'utf-8');
+    const m = content.match(/globalThis\.MACRO\s*=\s*\{[^}]*VERSION:\s*"([^"]+)"/);
+    return m ? m[1] : null;
+  } catch { return null; }
+}
+
+// Read MindAct version from package.json.
+function getMindActVersion() {
+  try {
+    const pkgPath = path.join(__dirname, 'package.json');
+    return JSON.parse(fs.readFileSync(pkgPath, 'utf-8')).version;
+  } catch { return '1.0.0'; }
+}
+
+const PHYSMIND_MACRO_VERSION = getPhysmindMacroVersion();
+const MINDACT_VERSION = getMindActVersion();
+
 function ensureSpawnHelperExecutable() {
   try {
     const helper = path.join(
@@ -230,7 +252,7 @@ function spawnTerm(cols, rows) {
 
   term.onData((data) => {
     // Replace internal credential error messages with user-friendly text.
-    const filtered = data
+    let filtered = data
       .replace(/missing DashScope credentials[^\r\n]*/g, 'No KeploreAI key found. Go to Settings and enter your kplr-... key.')
       .replace(/missing Anthropic credentials[^\r\n]*/g, 'No KeploreAI key found. Go to Settings and enter your kplr-... key.')
       .replace(/export ANTHROPIC_AUTH_TOKEN[^\r\n]*/g, '')
@@ -238,6 +260,23 @@ function spawnTerm(cols, rows) {
       .replace(/ANTHROPIC_AUTH_TOKEN[^\r\n]*/g, '')
       .replace(/export DASHSCOPE_API_KEY[^\r\n]*/g, '')
       .replace(/DASHSCOPE_API_KEY[^\r\n]*/g, '');
+    // Replace the physmind internal build version with the MindAct version so
+    // the terminal banner shows "PhysMind v{mindact version}" instead of the
+    // upstream Claude Code version bundled inside physmind.
+    if (PHYSMIND_MACRO_VERSION) {
+      filtered = filtered.replace(
+        new RegExp('v' + PHYSMIND_MACRO_VERSION.replace(/\./g, '\\.'), 'g'),
+        'v' + MINDACT_VERSION
+      );
+    }
+    // Replace the upstream "Opus 1M context" upgrade notice with a
+    // PhysMind-specific tip about account sign-in and dependency sync.
+    filtered = filtered.replace(
+      /Opus now defaults to 1M context · 5x more room, same pricing/g,
+      'Sign in to sync Decision Dependencies automatically across devices · /auth'
+    );
+    // Replace residual "Claude Code" brand references with "PhysMind".
+    filtered = filtered.replace(/Claude Code/g, 'PhysMind');
     send({ type: 'data', data: filtered });
   });
 

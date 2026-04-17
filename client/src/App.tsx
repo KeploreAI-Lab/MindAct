@@ -48,11 +48,26 @@ export default function App() {
     fetch("/api/config")
       .then(r => r.json())
       .then(data => {
-        if (isConfigComplete(data)) {
-          setConfig(data);
-          setPanelRatio(data.panel_ratio ?? 0.45);
-          loadVault(data.vault_path);
-          loadProject(data.project_path);
+        if (data) {
+          // Always store whatever the server returns so account_token is never lost,
+          // even when paths aren't configured yet.
+          const cfg: import("./store").Config = {
+            vault_path: data.vault_path ?? "",
+            project_path: data.project_path ?? "",
+            skills_path: data.skills_path ?? "",
+            panel_ratio: data.panel_ratio ?? 0.45,
+            kplr_token: data.kplr_token,
+            minimax_token: data.minimax_token,
+            account_token: data.account_token,
+            registry_url: data.registry_url,
+            admin_url: data.admin_url,
+          };
+          setConfig(cfg);
+          setPanelRatio(cfg.panel_ratio);
+          if (isConfigComplete(cfg)) {
+            loadVault(cfg.vault_path);
+            loadProject(cfg.project_path);
+          }
         } else {
           setConfig(null);
         }
@@ -295,6 +310,8 @@ const modalStyle: React.CSSProperties = {
   maxWidth: 500,
 };
 
+const DEFAULT_REGISTRY_URL = "https://registry.physical-mind.ai";
+
 function SettingsForm({ config, onSave }: { config: import("./store").Config; onSave: (c: import("./store").Config) => void }) {
   const uiLanguage = useStore(s => s.uiLanguage);
   const [vault, setVault] = useState(config.vault_path);
@@ -302,16 +319,61 @@ function SettingsForm({ config, onSave }: { config: import("./store").Config; on
   const [skills, setSkills] = useState(config.skills_path);
   const [minimaxToken, setMinimaxToken] = useState(config.minimax_token ?? "");
   const [showMinimaxToken, setShowMinimaxToken] = useState(false);
+  const [accountToken, setAccountToken] = useState(config.account_token ?? "");
+  const [showAccountToken, setShowAccountToken] = useState(false);
+  const [accountStatus, setAccountStatus] = useState<{ email: string; username?: string } | null>(null);
+  // Start in "checking" state immediately if a valid-looking token is already present,
+  // so the button never flashes "Sign In" before verification completes.
+  const [accountChecking, setAccountChecking] = useState(() => {
+    const tok = config.account_token ?? "";
+    return tok.startsWith("mact_") && tok.length >= 20;
+  });
+  const [waitingForToken, setWaitingForToken] = useState(false);
+  const pollRef = React.useRef<ReturnType<typeof setInterval> | null>(null);
+  const focusHandlerRef = React.useRef<(() => void) | null>(null);
 
   React.useEffect(() => {
     setVault(config.vault_path);
     setProject(config.project_path);
     setSkills(config.skills_path);
     setMinimaxToken(config.minimax_token ?? "");
+    setAccountToken(config.account_token ?? "");
   }, [config]);
 
+  // Verify account token and fetch user info whenever the token field changes.
+  // Only call the API when the token looks complete (mact_ prefix + at least 20 chars).
+  React.useEffect(() => {
+    if (!accountToken || !accountToken.startsWith("mact_") || accountToken.length < 20) {
+      setAccountStatus(null);
+      return;
+    }
+    setAccountChecking(true);
+    fetch("/api/registry/me")
+      .then(r => r.ok ? r.json() : null)
+      .then((d: any) => { setAccountStatus(d ? { email: d.email, username: d.username } : null); })
+      .catch(() => setAccountStatus(null))
+      .finally(() => setAccountChecking(false));
+  }, [accountToken]);
+
+  // Clean up poll and focus handler on unmount
+  React.useEffect(() => {
+    return () => {
+      if (pollRef.current) clearInterval(pollRef.current);
+      if (focusHandlerRef.current) window.removeEventListener("focus", focusHandlerRef.current);
+    };
+  }, []);
+
   const save = () => {
-    const c: import("./store").Config = { vault_path: vault, project_path: project, skills_path: skills, panel_ratio: config.panel_ratio, minimax_token: minimaxToken || undefined };
+    const c: import("./store").Config = {
+      vault_path: vault,
+      project_path: project,
+      skills_path: skills,
+      panel_ratio: config.panel_ratio,
+      minimax_token: minimaxToken || undefined,
+      account_token: accountToken || undefined,
+      registry_url: config.registry_url,
+      admin_url: config.admin_url,
+    };
     const body: Record<string, unknown> = { ...c };
     fetch("/api/config", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) })
       .then(async (res) => {
@@ -322,6 +384,58 @@ function SettingsForm({ config, onSave }: { config: import("./store").Config; on
         }
         onSave(c);
       });
+  };
+
+  const openAuthPage = () => {
+    const registryUrl = (config as any).registry_url ?? DEFAULT_REGISTRY_URL;
+    const callbackUrl = `http://localhost:3001/auth/callback`;
+    window.open(`${registryUrl}/register?redirect=${encodeURIComponent(callbackUrl)}`);
+    setWaitingForToken(true);
+    const startToken = accountToken;
+    let attempts = 0;
+
+    const stopPolling = () => {
+      if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
+      if (focusHandlerRef.current) { window.removeEventListener("focus", focusHandlerRef.current); focusHandlerRef.current = null; }
+    };
+
+    const checkToken = () => {
+      fetch("/api/config")
+        .then(r => r.ok ? r.json() : null)
+        .then((d: any) => {
+          const newToken: string = d?.account_token ?? "";
+          if (newToken && newToken !== startToken) {
+            setAccountToken(newToken);
+            setWaitingForToken(false);
+            stopPolling();
+          }
+        })
+        .catch(() => {});
+    };
+
+    // Fire immediately when main window regains focus (popup closed by user or auto-close)
+    if (focusHandlerRef.current) window.removeEventListener("focus", focusHandlerRef.current);
+    const onFocus = () => checkToken();
+    focusHandlerRef.current = onFocus;
+    window.addEventListener("focus", onFocus);
+
+    // Fallback: poll every 2s in case focus event doesn't fire
+    if (pollRef.current) clearInterval(pollRef.current);
+    pollRef.current = setInterval(() => {
+      attempts++;
+      checkToken();
+      // Stop after 3 minutes (90 × 2s)
+      if (attempts >= 90) {
+        setWaitingForToken(false);
+        stopPolling();
+      }
+    }, 2000);
+  };
+
+  const handleLogout = async () => {
+    await fetch("/api/auth/logout", { method: "POST" }).catch(() => {});
+    setAccountToken("");
+    setAccountStatus(null);
   };
 
   return (
@@ -345,6 +459,85 @@ function SettingsForm({ config, onSave }: { config: import("./store").Config; on
           {showMinimaxToken ? "Hide" : "Show"}
         </button>
       </div>
+
+      {/* ── Account section ── */}
+      <div style={{ borderTop: "1px solid #444", paddingTop: 12, marginTop: 4 }}>
+        <label style={{ color: "#888", fontSize: 11, display: "block", marginBottom: 8 }}>Account Token (mact_...)</label>
+        <div style={{ position: "relative", marginBottom: 8 }}>
+          <input
+            type={showAccountToken ? "text" : "password"}
+            value={accountToken}
+            onChange={e => setAccountToken(e.target.value)}
+            placeholder="mact_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+            style={{ ...inputStyle, paddingRight: 60, fontFamily: "monospace", fontSize: 11 }}
+          />
+          <button onClick={() => setShowAccountToken(v => !v)} style={{ position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", color: "#666", cursor: "pointer", fontSize: 11 }}>
+            {showAccountToken ? "Hide" : "Show"}
+          </button>
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6 }}>
+          {accountChecking ? (
+            <button
+              disabled
+              style={{
+                background: "#1e1e1e", border: "1px solid #44444455", borderRadius: 4,
+                color: "#555", cursor: "default", fontSize: 11, padding: "5px 12px", fontWeight: 600,
+              }}
+            >
+              Checking…
+            </button>
+          ) : accountStatus ? (
+            <button
+              onClick={handleLogout}
+              style={{
+                background: "#3a1e1e", border: "1px solid #cc000055", borderRadius: 4,
+                color: "#e05555", cursor: "pointer", fontSize: 11, padding: "5px 12px", fontWeight: 600,
+              }}
+            >
+              Sign Out
+            </button>
+          ) : (
+            <button
+              onClick={openAuthPage}
+              disabled={waitingForToken}
+              style={{
+                background: "#1e3a2e", border: "1px solid #007acc55", borderRadius: 4,
+                color: waitingForToken ? "#555" : "#007acc", cursor: waitingForToken ? "default" : "pointer",
+                fontSize: 11, padding: "5px 12px", fontWeight: 600,
+              }}
+            >
+              {waitingForToken ? "Waiting for sign-in…" : "Sign In / Register ↗"}
+            </button>
+          )}
+          <span style={{ fontSize: 10, color: "#555" }}>
+            {accountChecking ? "" : accountStatus ? "Signed in — click to sign out and clear cloud skills" : waitingForToken ? "Complete sign-in in the browser window" : "Opens browser to create or retrieve your account token"}
+          </span>
+        </div>
+        {/* Account status indicator */}
+        <div style={{ fontSize: 10, display: "flex", alignItems: "center", gap: 6 }}>
+          {accountChecking ? (
+            <span style={{ color: "#555" }}>Checking…</span>
+          ) : accountStatus ? (
+            <>
+              <span style={{ width: 6, height: 6, borderRadius: "50%", background: "#4ec9b0", display: "inline-block" }} />
+              <span style={{ color: "#4ec9b0" }}>Connected as </span>
+              <span style={{ color: "#ccc" }}>{accountStatus.email}</span>
+              {accountStatus.username && <span style={{ color: "#555" }}>(@{accountStatus.username})</span>}
+            </>
+          ) : accountToken ? (
+            <>
+              <span style={{ width: 6, height: 6, borderRadius: "50%", background: "#e05555", display: "inline-block" }} />
+              <span style={{ color: "#e05555" }}>Token not recognized</span>
+            </>
+          ) : (
+            <>
+              <span style={{ width: 6, height: 6, borderRadius: "50%", background: "#555", display: "inline-block" }} />
+              <span style={{ color: "#555" }}>Not signed in — private skills won't sync</span>
+            </>
+          )}
+        </div>
+      </div>
+
       <button onClick={save} style={{ ...btnStyle(true), alignSelf: "flex-end", marginTop: 8 }}>{t(uiLanguage, "save")}</button>
     </div>
   );
