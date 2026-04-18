@@ -1,0 +1,605 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>Download MindAct — AI workspace for engineers</title>
+<meta name="description" content="MindAct is an AI workspace for engineers. Download for macOS, Windows, and Linux.">
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg: #08080e;
+    --bg2: #0f0f18;
+    --border: rgba(255,255,255,.07);
+    --text: #e8e8f0;
+    --text-dim: #888;
+    --text-faint: #444;
+    --accent: #4ec9b0;
+    --accent-dim: rgba(78,201,176,.15);
+    --accent-border: rgba(78,201,176,.3);
+    --btn-h: 48px;
+    --radius: 10px;
+  }
+
+  html, body { height: 100%; }
+
+  body {
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    display: flex;
+    flex-direction: column;
+    min-height: 100vh;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* ── Nav ──────────────────────────────────────────────────────────────────── */
+  nav {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 32px;
+    height: 56px;
+    border-bottom: 1px solid var(--border);
+    position: sticky;
+    top: 0;
+    background: rgba(8,8,14,.85);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    z-index: 100;
+  }
+
+  .nav-logo {
+    font-size: 15px;
+    font-weight: 700;
+    color: #fff;
+    text-decoration: none;
+    letter-spacing: -.03em;
+  }
+
+  .nav-links {
+    display: flex;
+    align-items: center;
+    gap: 28px;
+  }
+
+  .nav-links a {
+    font-size: 13px;
+    color: var(--text-dim);
+    text-decoration: none;
+    transition: color .15s;
+  }
+
+  .nav-links a:hover { color: var(--text); }
+  .nav-links a.active { color: var(--accent); }
+
+  /* ── Hero ─────────────────────────────────────────────────────────────────── */
+  main {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 80px 24px 60px;
+    text-align: center;
+  }
+
+  .eyebrow {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: .08em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin-bottom: 24px;
+  }
+
+  .eyebrow-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--accent);
+    animation: pulse 2s ease-in-out infinite;
+  }
+
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: .4; }
+  }
+
+  h1 {
+    font-size: clamp(40px, 8vw, 72px);
+    font-weight: 800;
+    letter-spacing: -.04em;
+    line-height: 1.0;
+    color: #fff;
+    margin-bottom: 18px;
+  }
+
+  .tagline {
+    font-size: clamp(16px, 2.5vw, 20px);
+    color: var(--text-dim);
+    line-height: 1.5;
+    max-width: 480px;
+    margin-bottom: 48px;
+  }
+
+  /* ── Version badge ────────────────────────────────────────────────────────── */
+  .version-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    padding: 5px 14px;
+    font-size: 12px;
+    color: var(--text-dim);
+    margin-bottom: 36px;
+    font-family: ui-monospace, monospace;
+  }
+
+  #version-text { color: var(--text); }
+
+  /* ── Download buttons ─────────────────────────────────────────────────────── */
+  .dl-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 12px;
+    width: 100%;
+    max-width: 560px;
+    margin-bottom: 20px;
+  }
+
+  @media (max-width: 520px) {
+    .dl-grid { grid-template-columns: 1fr; max-width: 320px; }
+  }
+
+  .dl-btn {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+    padding: 18px 12px;
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    color: var(--text-dim);
+    text-decoration: none;
+    font-size: 13px;
+    font-weight: 500;
+    transition: all .2s;
+    cursor: pointer;
+    position: relative;
+  }
+
+  .dl-btn:hover {
+    border-color: rgba(255,255,255,.18);
+    color: var(--text);
+    background: rgba(255,255,255,.04);
+    transform: translateY(-1px);
+  }
+
+  .dl-btn.highlighted {
+    background: var(--accent-dim);
+    border-color: var(--accent-border);
+    color: var(--accent);
+  }
+
+  .dl-btn.highlighted .dl-icon { color: var(--accent); }
+
+  .dl-btn.disabled {
+    opacity: .4;
+    cursor: default;
+    pointer-events: none;
+  }
+
+  .dl-icon {
+    color: var(--text-faint);
+    transition: color .2s;
+  }
+
+  .dl-btn:hover .dl-icon { color: var(--text-dim); }
+
+  .dl-label { font-size: 13px; font-weight: 600; line-height: 1; }
+  .dl-sub { font-size: 10px; color: var(--text-faint); letter-spacing: .02em; }
+
+  .dl-btn.highlighted .dl-sub { color: rgba(78,201,176,.6); }
+
+  .recommended-tag {
+    position: absolute;
+    top: -8px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: var(--accent);
+    color: #000;
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: .06em;
+    text-transform: uppercase;
+    padding: 2px 8px;
+    border-radius: 999px;
+    white-space: nowrap;
+  }
+
+  /* ── Secondary links ──────────────────────────────────────────────────────── */
+  .secondary-links {
+    display: flex;
+    gap: 20px;
+    justify-content: center;
+    flex-wrap: wrap;
+    margin-top: 8px;
+  }
+
+  .secondary-links a {
+    font-size: 12px;
+    color: var(--text-faint);
+    text-decoration: none;
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    transition: color .15s;
+  }
+
+  .secondary-links a:hover { color: var(--text-dim); }
+
+  /* ── Previous releases ────────────────────────────────────────────────────── */
+  .prev-releases {
+    width: 100%;
+    max-width: 720px;
+    margin: 0 auto 60px;
+    padding: 0 24px;
+  }
+
+  .prev-title {
+    font-size: 13px;
+    font-weight: 600;
+    letter-spacing: .06em;
+    text-transform: uppercase;
+    color: var(--text-faint);
+    margin-bottom: 14px;
+  }
+
+  .prev-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12px;
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    overflow: hidden;
+  }
+
+  .prev-table th {
+    text-align: left;
+    padding: 9px 14px;
+    font-size: 10px;
+    font-weight: 500;
+    letter-spacing: .06em;
+    text-transform: uppercase;
+    color: var(--text-faint);
+    border-bottom: 1px solid var(--border);
+  }
+
+  .prev-table td {
+    padding: 10px 14px;
+    border-bottom: 1px solid rgba(255,255,255,.04);
+    vertical-align: middle;
+  }
+
+  .prev-table tr:last-child td { border-bottom: none; }
+
+  .prev-table tr:hover td { background: rgba(255,255,255,.02); }
+
+  .prev-version {
+    font-family: ui-monospace, monospace;
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--text);
+  }
+
+  .prev-date { color: var(--text-faint); font-size: 11px; }
+
+  .prev-links {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+
+  .prev-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 3px 10px;
+    background: transparent;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    font-size: 10px;
+    color: var(--text-faint);
+    text-decoration: none;
+    transition: all .15s;
+  }
+
+  .prev-link:hover {
+    border-color: rgba(255,255,255,.18);
+    color: var(--text);
+  }
+
+  /* ── Footer ───────────────────────────────────────────────────────────────── */
+  footer {
+    padding: 24px 32px;
+    border-top: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+
+  .footer-links {
+    display: flex;
+    gap: 20px;
+  }
+
+  .footer-links a, .footer-copy {
+    font-size: 11px;
+    color: var(--text-faint);
+    text-decoration: none;
+    transition: color .15s;
+  }
+
+  .footer-links a:hover { color: var(--text-dim); }
+</style>
+</head>
+<body>
+
+<!-- ── Navigation ─────────────────────────────────────────────────────────── -->
+<nav>
+  <a href="https://physical-mind.ai/" class="nav-logo">MindAct</a>
+  <div class="nav-links">
+    <a href="https://physical-mind.ai/">Home</a>
+    <a href="https://download.physical-mind.ai" class="active">Download</a>
+    <a href="https://registry.physical-mind.ai/register">Sign In</a>
+  </div>
+</nav>
+
+<!-- ── Hero ───────────────────────────────────────────────────────────────── -->
+<main>
+  <div class="eyebrow">
+    <span class="eyebrow-dot"></span>
+    Now available
+  </div>
+
+  <h1>MindAct</h1>
+  <p class="tagline">AI workspace for engineers</p>
+
+  <div class="version-badge">
+    <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor" style="color:#555">
+      <path d="M8 1a7 7 0 1 0 0 14A7 7 0 0 0 8 1zm.75 3.5v3.75l2.5 1.25-.5.866-3-1.5V4.5h1z"/>
+    </svg>
+    Version <span id="version-text">—</span>
+  </div>
+
+  <!-- Download buttons -->
+  <div class="dl-grid">
+    <a class="dl-btn" id="btn-macos-arm64" href="#" download>
+      <svg class="dl-icon" width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
+        <path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.8-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.38 2.83M13 3.5c.73-.83 1.94-1.46 2.94-1.5.13 1.17-.34 2.35-1.04 3.19-.69.85-1.83 1.51-2.95 1.42-.15-1.15.41-2.35 1.05-3.11z"/>
+      </svg>
+      <span class="dl-label">macOS</span>
+      <span class="dl-sub">Apple Silicon</span>
+    </a>
+
+    <a class="dl-btn" id="btn-windows-x64" href="#" download>
+      <svg class="dl-icon" width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
+        <path d="M3 12V6.75l6-1.32v6.57H3zm17 0v-7.5l-8 1.41V12h8zM3 13h6v6.57l-6-1.32V13zm17 0h-8v6.09l8 1.41V13z"/>
+      </svg>
+      <span class="dl-label">Windows</span>
+      <span class="dl-sub">x64 .exe</span>
+    </a>
+
+    <a class="dl-btn" id="btn-linux-x64" href="#" download>
+      <svg class="dl-icon" width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
+        <path d="M12.504 0c-.155 0-.315.008-.48.021-4.226.333-3.105 4.807-3.17 6.298-.076 1.092-.3 1.953-1.05 3.02-.885 1.051-2.127 2.75-2.716 4.521-.278.832-.41 1.684-.287 2.489a.424.424 0 00-.11.135c-.26.268-.45.6-.663.839-.199.199-.485.267-.797.4-.313.136-.658.269-.864.68-.09.189-.136.394-.132.602 0 .199.027.4.055.536.058.399.116.728.04.97-.249.68-.28 1.145-.106 1.484.174.334.535.47.94.601.81.2 1.91.135 2.774.6.926.466 1.866.67 2.616.47.526-.116.97-.464 1.208-.946.587-.003 1.23-.269 2.26-.334.699-.058 1.574.267 2.577.2.025.134.063.198.114.333l.003.003c.391.778 1.113 1.132 1.884 1.071.771-.06 1.592-.536 2.257-1.306.631-.765 1.683-1.084 2.378-1.503.348-.199.629-.469.649-.853.023-.417-.193-.818-.608-1.143-.81-.6-1.74-.857-2.336-1.392-.618-.57-.64-1.405-1.016-2.117-.34-.7-.68-1.344-1.236-1.86C20.34 12.71 20 11.798 20 10.8c0-1.013.239-2.049.758-3.052C21.32 6.559 21.5 5.447 21.5 4.53c0-2.355-1.55-4.077-3.5-4.39-.312-.056-.621-.078-.932-.078C16.047.062 14.964.47 14.157 1.2c-.42-.2-.887-.327-1.37-.384a5.42 5.42 0 00-.283-.016zm-.297 2.235a4.71 4.71 0 01.553.046c.377.05.743.17 1.073.367.193-.254.414-.445.647-.565.348-.18.748-.243 1.155-.19.813.11 1.627.713 2.09 1.647.233.464.358.996.358 1.562 0 .741-.15 1.58-.653 2.578-.57 1.098-.852 2.274-.852 3.484 0 1.278.408 2.405 1.077 3.336.547.758.854 1.5 1.135 2.14.288.653.527 1.22.986 1.646.457.428 1.148.626 1.986 1.224.238.177.37.38.367.546-.007.114-.084.22-.218.307-.518.316-1.597.65-2.3 1.146-.703.497-1.43 1.274-2.056 2.026-.509.617-1.053.999-1.55 1.039-.497.041-.923-.165-1.167-.668l-.003-.007a1.682 1.682 0 00-.226-.35c-.077-.1-.194-.19-.379-.196l-.008-.003c-.944-.057-1.8-.371-2.48-.332-1.067.065-1.644.322-2.204.322-.016 0-.033 0-.05-.002-.42-.034-.684-.38-.873-.761-.31-.614-.264-1.334.085-2.235.125-.332.142-.874.052-1.414-.044-.27-.085-.547-.085-.823 0-.18.023-.356.084-.519.126-.337.364-.51.602-.654.496-.293 1.056-.366 1.605-.487.275-.063.56-.15.802-.323.376-.271.561-.677.739-1.086.352-.816.736-1.653 1.521-2.33C9.866 10.26 10 9.166 10 8c0-2.206 1.12-3.818 2.207-4.765z"/>
+      </svg>
+      <span class="dl-label">Linux</span>
+      <span class="dl-sub">.AppImage</span>
+    </a>
+
+    <a class="dl-btn" id="btn-linux-arm64" href="#" download>
+      <svg class="dl-icon" width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
+        <path d="M12.504 0c-.155 0-.315.008-.48.021-4.226.333-3.105 4.807-3.17 6.298-.076 1.092-.3 1.953-1.05 3.02-.885 1.051-2.127 2.75-2.716 4.521-.278.832-.41 1.684-.287 2.489a.424.424 0 00-.11.135c-.26.268-.45.6-.663.839-.199.199-.485.267-.797.4-.313.136-.658.269-.864.68-.09.189-.136.394-.132.602 0 .199.027.4.055.536.058.399.116.728.04.97-.249.68-.28 1.145-.106 1.484.174.334.535.47.94.601.81.2 1.91.135 2.774.6.926.466 1.866.67 2.616.47.526-.116.97-.464 1.208-.946.587-.003 1.23-.269 2.26-.334.699-.058 1.574.267 2.577.2.025.134.063.198.114.333l.003.003c.391.778 1.113 1.132 1.884 1.071.771-.06 1.592-.536 2.257-1.306.631-.765 1.683-1.084 2.378-1.503.348-.199.629-.469.649-.853.023-.417-.193-.818-.608-1.143-.81-.6-1.74-.857-2.336-1.392-.618-.57-.64-1.405-1.016-2.117-.34-.7-.68-1.344-1.236-1.86C20.34 12.71 20 11.798 20 10.8c0-1.013.239-2.049.758-3.052C21.32 6.559 21.5 5.447 21.5 4.53c0-2.355-1.55-4.077-3.5-4.39-.312-.056-.621-.078-.932-.078C16.047.062 14.964.47 14.157 1.2c-.42-.2-.887-.327-1.37-.384a5.42 5.42 0 00-.283-.016zm-.297 2.235a4.71 4.71 0 01.553.046c.377.05.743.17 1.073.367.193-.254.414-.445.647-.565.348-.18.748-.243 1.155-.19.813.11 1.627.713 2.09 1.647.233.464.358.996.358 1.562 0 .741-.15 1.58-.653 2.578-.57 1.098-.852 2.274-.852 3.484 0 1.278.408 2.405 1.077 3.336.547.758.854 1.5 1.135 2.14.288.653.527 1.22.986 1.646.457.428 1.148.626 1.986 1.224.238.177.37.38.367.546-.007.114-.084.22-.218.307-.518.316-1.597.65-2.3 1.146-.703.497-1.43 1.274-2.056 2.026-.509.617-1.053.999-1.55 1.039-.497.041-.923-.165-1.167-.668l-.003-.007a1.682 1.682 0 00-.226-.35c-.077-.1-.194-.19-.379-.196l-.008-.003c-.944-.057-1.8-.371-2.48-.332-1.067.065-1.644.322-2.204.322-.016 0-.033 0-.05-.002-.42-.034-.684-.38-.873-.761-.31-.614-.264-1.334.085-2.235.125-.332.142-.874.052-1.414-.044-.27-.085-.547-.085-.823 0-.18.023-.356.084-.519.126-.337.364-.51.602-.654.496-.293 1.056-.366 1.605-.487.275-.063.56-.15.802-.323.376-.271.561-.677.739-1.086.352-.816.736-1.653 1.521-2.33C9.866 10.26 10 9.166 10 8c0-2.206 1.12-3.818 2.207-4.765z"/>
+      </svg>
+      <span class="dl-label">Linux</span>
+      <span class="dl-sub">ARM64</span>
+    </a>
+
+    <a class="dl-btn" id="btn-linux-tarball" href="#" download>
+      <svg class="dl-icon" width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
+        <path d="M20 6h-2.18c.07-.23.18-.44.18-.68 0-1.29-1.04-2.32-2.32-2.32-.56 0-1.05.19-1.43.5L12 5.5l-2.25-2C9.37 3.19 8.88 3 8.32 3 7.04 3 6 4.04 6 5.32c0 .24.11.45.18.68H4c-1.11 0-1.99.89-1.99 2L2 19c0 1.11.89 2 2 2h16c1.11 0 2-.89 2-2V8c0-1.11-.89-2-2-2zm-7.82-2.06c.14-.11.31-.19.5-.19.44 0 .82.37.82.82 0 .12-.03.23-.07.32L12 6.31 11.57 5.9c-.04-.09-.07-.2-.07-.32 0-.42.34-.78.68-.64zM8.32 5c.19 0 .36.08.5.19l.43.41-.43.41c-.04.09-.07.2-.07.32 0 .45.37.82.82.82.19 0 .36-.08.5-.19l.43-.41-.43.41c-.14.11-.31.19-.5.19-.44 0-.82-.37-.82-.82C8 5.88 8.13 5.6 8.32 5zM20 19H4V8h16v11z"/>
+      </svg>
+      <span class="dl-label">Linux</span>
+      <span class="dl-sub">.tar.gz</span>
+    </a>
+  </div>
+
+  <!-- Secondary links -->
+  <div class="secondary-links">
+    <a href="https://github.com/KeploreAI-Lab/MindAct" target="_blank" rel="noopener">
+      <svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor">
+        <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/>
+      </svg>
+      View on GitHub
+    </a>
+    <a href="https://registry.physical-mind.ai/register">
+      <svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor">
+        <path d="M8 1a3.5 3.5 0 1 0 0 7A3.5 3.5 0 0 0 8 1zM4.5 8a4.5 4.5 0 1 1 0 .001zM2 13.5c0-2.2 2.686-4 6-4s6 1.8 6 4V15H2v-1.5z"/>
+      </svg>
+      Create Account
+    </a>
+  </div>
+</main>
+
+<!-- ── Previous releases ──────────────────────────────────────────────────── -->
+<div class="prev-releases" id="prev-releases" style="display:none">
+  <h3 class="prev-title">Previous Releases</h3>
+  <table class="prev-table">
+    <thead>
+      <tr>
+        <th>Version</th>
+        <th>Date</th>
+        <th>Downloads</th>
+      </tr>
+    </thead>
+    <tbody id="prev-tbody"></tbody>
+  </table>
+</div>
+
+<!-- ── Footer ──────────────────────────────────────────────────────────────── -->
+<footer>
+  <div class="footer-links">
+    <a href="https://physical-mind.ai/">physical-mind.ai</a>
+    <a href="https://registry.physical-mind.ai/">Registry</a>
+    <a href="https://registry.physical-mind.ai/register">Sign In</a>
+  </div>
+  <span class="footer-copy">&copy; 2026 Physical Mind AI</span>
+</footer>
+
+<script>
+const REGISTRY_URL = "https://registry.physical-mind.ai";
+
+// ── OS detection ──────────────────────────────────────────────────────────────
+function detectOS() {
+  const p = (navigator.userAgentData?.platform ?? navigator.platform ?? "").toLowerCase();
+  if (p.includes("mac")) return "macos";
+  if (p.includes("win")) return "windows";
+  return "linux";
+}
+
+// ── Highlight correct hero button and add "Recommended" badge ─────────────────
+function highlightOS(os) {
+  const platformMap = {
+    macos:   "macos-arm64",
+    windows: "windows-x64",
+    linux:   "linux-x64",
+  };
+  const targetId = "btn-" + (platformMap[os] ?? "linux-x64");
+  const btn = document.getElementById(targetId);
+  if (!btn) return;
+  btn.classList.add("highlighted");
+  const tag = document.createElement("span");
+  tag.className = "recommended-tag";
+  tag.textContent = "Recommended";
+  btn.appendChild(tag);
+}
+
+// ── Populate hero download buttons with asset URLs ────────────────────────────
+function populateHeroButtons(assets) {
+  const btnIds = {
+    "macos-arm64":   "btn-macos-arm64",
+    "windows-x64":   "btn-windows-x64",
+    "linux-x64":     "btn-linux-x64",
+    "linux-arm64":   "btn-linux-arm64",
+    "linux-tarball": "btn-linux-tarball",
+  };
+  for (const asset of assets) {
+    const btnId = btnIds[asset.platform];
+    if (!btnId) continue;
+    const btn = document.getElementById(btnId);
+    if (!btn || !asset.download_url) continue;
+    btn.href = asset.download_url;
+    btn.setAttribute("download", asset.filename ?? "");
+    btn.classList.remove("disabled");
+  }
+}
+
+// ── Platform label map for previous releases table ────────────────────────────
+const PLATFORM_LABELS = {
+  "macos-arm64":   "macOS (Apple Silicon)",
+  "windows-x64":   "Windows",
+  "linux-x64":     "Linux x64",
+  "linux-arm64":   "Linux ARM64",
+  "linux-tarball": "Linux .tar.gz",
+};
+
+// ── Render previous releases table ───────────────────────────────────────────
+function renderPreviousReleases(releases) {
+  if (!releases.length) return;
+
+  const tbody = document.getElementById("prev-tbody");
+  const section = document.getElementById("prev-releases");
+  if (!tbody || !section) return;
+
+  for (const rel of releases) {
+    const date = (() => {
+      try { return new Date(rel.published_at).toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" }); }
+      catch { return rel.published_at; }
+    })();
+
+    const linksHtml = (rel.assets || [])
+      .filter(a => a.download_url)
+      .map(a => {
+        const label = PLATFORM_LABELS[a.platform] ?? a.platform;
+        return `<a class="prev-link" href="${a.download_url}" download="${a.filename ?? ""}">${label}</a>`;
+      })
+      .join("");
+
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td><span class="prev-version">v${rel.version}</span></td>
+      <td><span class="prev-date">${date}</span></td>
+      <td><div class="prev-links">${linksHtml || '<span style="color:var(--text-faint);font-size:11px">No assets</span>'}</div></td>
+    `;
+    tbody.appendChild(tr);
+  }
+
+  section.style.display = "";
+}
+
+// ── Fetch all releases and populate page ──────────────────────────────────────
+async function loadReleases() {
+  try {
+    const res = await fetch(REGISTRY_URL + "/releases/list");
+    if (!res.ok) {
+      // Fallback to /releases/latest for a single-version display
+      const res2 = await fetch(REGISTRY_URL + "/releases/latest");
+      if (!res2.ok) return;
+      const data = await res2.json();
+      const versionEl = document.getElementById("version-text");
+      if (versionEl) versionEl.textContent = "v" + data.version;
+      if (Array.isArray(data.assets)) populateHeroButtons(data.assets);
+      return;
+    }
+
+    const data = await res.json();
+    const releases = data.releases ?? [];
+    if (!releases.length) return;
+
+    // Latest release drives the hero section
+    const latest = releases.find(r => r.is_latest) ?? releases[0];
+    const versionEl = document.getElementById("version-text");
+    if (versionEl) versionEl.textContent = "v" + latest.version;
+    if (Array.isArray(latest.assets)) populateHeroButtons(latest.assets);
+
+    // All other releases go in the previous releases table
+    const older = releases.filter(r => r.version !== latest.version);
+    renderPreviousReleases(older);
+  } catch (e) {
+    // Silently degrade — hero buttons remain visible without live URLs
+    console.warn("Could not load release data:", e);
+  }
+}
+
+// ── Init ──────────────────────────────────────────────────────────────────────
+(async function init() {
+  document.querySelectorAll(".dl-btn").forEach(b => b.classList.add("disabled"));
+  highlightOS(detectOS());
+  await loadReleases();
+})();
+</script>
+</body>
+</html>

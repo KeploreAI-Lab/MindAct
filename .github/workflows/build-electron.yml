@@ -15,9 +15,6 @@ jobs:
           - os: macos-latest
             platform: mac
             arch: arm64
-          - os: macos-13       # Intel Mac runner
-            platform: mac
-            arch: x64
           - os: windows-latest
             platform: windows
             arch: x64
