@@ -37,15 +37,14 @@ publish:
   url: https://registry.physical-mind.ai/releases/electron
 
 # macOS — server binary 无扩展名
+# arch 不在 YAML 中指定，完全由 CLI --arm64 / --x64 控制，避免交叉编译 node-pty 失败
 mac:
   extraResources:
     - from: mindact-server
       to: mindact-server
   target:
     - target: dmg
-      arch: [x64, arm64]
     - target: zip
-      arch: [x64, arm64]
   category: public.app-category.developer-tools
   darkModeSupport: true
 
@@ -67,7 +66,6 @@ win:
       to: mindact-server.exe
   target:
     - target: nsis
-      arch: [x64]
 
 nsis:
   oneClick: true
@@ -82,5 +80,4 @@ linux:
       to: mindact-server
   target:
     - target: AppImage
-      arch: [x64]
   category: Development
