@@ -1,0 +1,175 @@
+name: Build & Release Electron App
+
+on:
+  push:
+    tags:
+      - 'v*'           # 打 v1.2.3 标签时自动触发
+  workflow_dispatch:   # 手动触发（用于测试）
+    inputs:
+      upload_to_cloudflare:
+        description: 'Upload release to Cloudflare (requires REGISTRY_TOKEN secret)'
+        type: boolean
+        default: true
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            platform: mac
+            arch: arm64
+          - os: macos-13       # Intel Mac runner
+            platform: mac
+            arch: x64
+          - os: windows-latest
+            platform: windows
+            arch: x64
+          - os: ubuntu-latest
+            platform: linux
+            arch: x64
+
+    runs-on: ${{ matrix.os }}
+    name: Build (${{ matrix.platform }}-${{ matrix.arch }})
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install root dependencies
+        run: bun install
+
+      - name: Install client dependencies
+        run: cd client && bun install
+
+      # Linux: electron-builder requires rpmbuild + additional libs
+      - name: Install Linux build deps
+        if: matrix.os == 'ubuntu-latest'
+        run: sudo apt-get update && sudo apt-get install -y rpm
+
+      - name: Prebuild (compile server + build frontend)
+        run: bash scripts/prebuild.sh
+
+      # electron-builder reads APPLE_* secrets for code signing on macOS
+      - name: Build Electron installer
+        run: bun run dist:${{ matrix.platform }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # macOS code signing (optional — omit to build unsigned)
+          # APPLE_ID: ${{ secrets.APPLE_ID }}
+          # APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          # APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          # Windows code signing (optional)
+          # WIN_CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
+          # WIN_CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
+
+      - name: List build output
+        run: ls -lh dist-electron/ || dir dist-electron\
+
+      - name: Upload installer as GitHub artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: mindact-${{ matrix.platform }}-${{ matrix.arch }}
+          path: |
+            dist-electron/*.dmg
+            dist-electron/*.zip
+            dist-electron/*.exe
+            dist-electron/*.AppImage
+          retention-days: 30
+
+      # ── 上传到 Cloudflare Release 系统 ──────────────────────────────────────
+      - name: Upload to Cloudflare Release (macOS arm64)
+        if: matrix.platform == 'mac' && matrix.arch == 'arm64' && (github.event_name == 'push' || inputs.upload_to_cloudflare)
+        shell: bash
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          FILE=$(ls dist-electron/*.zip 2>/dev/null | head -1 || ls dist-electron/*.dmg 2>/dev/null | head -1)
+          [ -z "$FILE" ] && echo "No release file found" && exit 1
+          FILENAME=$(basename "$FILE")
+          echo "Uploading $FILENAME as version $VERSION / platform mac-arm64..."
+          curl -sf -X POST \
+            -H "Authorization: Bearer $REGISTRY_TOKEN" \
+            -F "metadata={\"version\":\"$VERSION\",\"platform\":\"mac-arm64\",\"channel\":\"stable\",\"release_notes\":\"Release $VERSION\"}" \
+            -F "file=@$FILE;filename=$FILENAME" \
+            "$REGISTRY_URL/releases/upload"
+          echo "Upload complete."
+        env:
+          REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
+          REGISTRY_URL: ${{ secrets.REGISTRY_URL }}
+
+      - name: Upload to Cloudflare Release (macOS x64)
+        if: matrix.platform == 'mac' && matrix.arch == 'x64' && (github.event_name == 'push' || inputs.upload_to_cloudflare)
+        shell: bash
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          FILE=$(ls dist-electron/*.zip 2>/dev/null | head -1 || ls dist-electron/*.dmg 2>/dev/null | head -1)
+          [ -z "$FILE" ] && echo "No release file found" && exit 1
+          FILENAME=$(basename "$FILE")
+          curl -sf -X POST \
+            -H "Authorization: Bearer $REGISTRY_TOKEN" \
+            -F "metadata={\"version\":\"$VERSION\",\"platform\":\"mac-x64\",\"channel\":\"stable\",\"release_notes\":\"Release $VERSION\"}" \
+            -F "file=@$FILE;filename=$FILENAME" \
+            "$REGISTRY_URL/releases/upload"
+        env:
+          REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
+          REGISTRY_URL: ${{ secrets.REGISTRY_URL }}
+
+      - name: Upload to Cloudflare Release (Windows)
+        if: matrix.platform == 'windows' && (github.event_name == 'push' || inputs.upload_to_cloudflare)
+        shell: bash
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          FILE=$(ls dist-electron/*.exe 2>/dev/null | head -1)
+          [ -z "$FILE" ] && echo "No exe found" && exit 1
+          FILENAME=$(basename "$FILE")
+          curl -sf -X POST \
+            -H "Authorization: Bearer $REGISTRY_TOKEN" \
+            -F "metadata={\"version\":\"$VERSION\",\"platform\":\"windows\",\"channel\":\"stable\",\"release_notes\":\"Release $VERSION\"}" \
+            -F "file=@$FILE;filename=$FILENAME" \
+            "$REGISTRY_URL/releases/upload"
+        env:
+          REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
+          REGISTRY_URL: ${{ secrets.REGISTRY_URL }}
+
+      - name: Upload to Cloudflare Release (Linux)
+        if: matrix.platform == 'linux' && (github.event_name == 'push' || inputs.upload_to_cloudflare)
+        shell: bash
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          FILE=$(ls dist-electron/*.AppImage 2>/dev/null | head -1)
+          [ -z "$FILE" ] && echo "No AppImage found" && exit 1
+          FILENAME=$(basename "$FILE")
+          curl -sf -X POST \
+            -H "Authorization: Bearer $REGISTRY_TOKEN" \
+            -F "metadata={\"version\":\"$VERSION\",\"platform\":\"linux\",\"channel\":\"stable\",\"release_notes\":\"Release $VERSION\"}" \
+            -F "file=@$FILE;filename=$FILENAME" \
+            "$REGISTRY_URL/releases/upload"
+        env:
+          REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
+          REGISTRY_URL: ${{ secrets.REGISTRY_URL }}
+
+  # ── 所有平台构建完成后，promote 最新版本 ───────────────────────────────────────
+  promote:
+    needs: build
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - name: Promote release to latest (stable channel)
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          echo "Promoting v$VERSION to latest..."
+          curl -sf -X POST \
+            -H "Authorization: Bearer $REGISTRY_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d "{\"version\":\"$VERSION\"}" \
+            "$REGISTRY_URL/releases/promote"
+          echo "v$VERSION is now the latest stable release."
+        env:
+          REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
+          REGISTRY_URL: ${{ secrets.REGISTRY_URL }}

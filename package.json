@@ -1,7 +1,10 @@
 {
   "name": "mindact",
   "version": "1.0.0",
+  "description": "MindAct — AI-powered knowledge and skill management desktop app",
+  "author": "KeploreAI <hi@physical-mind.ai>",
   "type": "module",
+  "main": "electron-main.cjs",
   "scripts": {
     "postinstall": "node -e \"try{require('./node_modules/node-pty');console.log('✓ node-pty OK')}catch(e){console.error('✗ node-pty failed:',e.message)}\"",
     "dev": "concurrently \"bun run server.ts\" \"bun run --cwd client dev\"",
@@ -9,12 +12,17 @@
     "build": "bun run --cwd client build",
     "start": "bun run build && bun run server.ts",
     "calib:collect": "CALIB_SAMPLES=100 bun run scripts/calibration_collect.ts",
-    "calib:fit": "bun run scripts/calibration_fit.ts"
+    "calib:fit": "bun run scripts/calibration_fit.ts",
+    "dist": "npx electron-builder",
+    "dist:mac": "npx electron-builder --mac",
+    "dist:win": "npx electron-builder --win",
+    "dist:linux": "npx electron-builder --linux"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.82.0",
     "@keploreai/physmind": "^1.0.11",
     "adm-zip": "^0.5.17",
+    "electron-updater": "^6.3.9",
     "js-yaml": "^4.1.1",
     "node-pty": "^1.0.0",
     "zod": "^4.3.6"
@@ -25,6 +33,7 @@
     "@types/node": "^20.0.0",
     "concurrently": "^8.2.0",
     "electron": "40.8.5",
+    "electron-builder": "^25.1.8",
     "wrangler": "^4.82.2"
   }
 }
