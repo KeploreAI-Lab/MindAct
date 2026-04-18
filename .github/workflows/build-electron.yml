@@ -54,10 +54,12 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y rpm
 
       # node-gyp (used to rebuild node-pty for Electron) requires Python's distutils.
-      # Python 3.12+ removed distutils; setuptools restores it on all platforms.
-      - name: Install Python setuptools (node-gyp needs distutils)
-        shell: bash
-        run: pip3 install setuptools || pip install setuptools || true
+      # Python 3.12+ removed distutils; pinning to 3.11 (which still ships distutils)
+      # is more reliable than trying to install setuptools on managed Python envs.
+      - name: Setup Python 3.11 (node-gyp needs distutils)
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
 
       - name: Prebuild (compile server + build frontend)
         run: bash scripts/prebuild.sh
@@ -110,13 +112,15 @@ jobs:
           FILE=$(ls dist-electron/*.zip 2>/dev/null | head -1 || ls dist-electron/*.dmg 2>/dev/null | head -1)
           [ -z "$FILE" ] && echo "No release file found" && exit 1
           FILENAME=$(basename "$FILE")
-          echo "Uploading $FILENAME as version $VERSION / platform mac-arm64..."
-          curl -sf -X POST \
+          echo "Uploading $FILENAME ($(du -sh "$FILE" | cut -f1)) as v$VERSION / mac-arm64..."
+          RESP=$(curl -s -w "\n%{http_code}" -X POST \
             -H "Authorization: Bearer $REGISTRY_TOKEN" \
             -F "metadata={\"version\":\"$VERSION\",\"platform\":\"mac-arm64\",\"channel\":\"stable\",\"release_notes\":\"Release $VERSION\"}" \
             -F "file=@$FILE;filename=$FILENAME" \
-            "$REGISTRY_URL/releases/upload"
-          echo "Upload complete."
+            "$REGISTRY_URL/releases/upload")
+          HTTP_CODE=$(echo "$RESP" | tail -1)
+          echo "Server response (HTTP $HTTP_CODE): $(echo "$RESP" | head -n -1)"
+          [ "$HTTP_CODE" -ge 200 ] && [ "$HTTP_CODE" -lt 300 ] || exit 1
         env:
           REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
           REGISTRY_URL: ${{ secrets.REGISTRY_URL }}
@@ -133,11 +137,15 @@ jobs:
           FILE=$(ls dist-electron/*.zip 2>/dev/null | head -1 || ls dist-electron/*.dmg 2>/dev/null | head -1)
           [ -z "$FILE" ] && echo "No release file found" && exit 1
           FILENAME=$(basename "$FILE")
-          curl -sf -X POST \
+          echo "Uploading $FILENAME ($(du -sh "$FILE" | cut -f1)) as v$VERSION / mac-x64..."
+          RESP=$(curl -s -w "\n%{http_code}" -X POST \
             -H "Authorization: Bearer $REGISTRY_TOKEN" \
             -F "metadata={\"version\":\"$VERSION\",\"platform\":\"mac-x64\",\"channel\":\"stable\",\"release_notes\":\"Release $VERSION\"}" \
             -F "file=@$FILE;filename=$FILENAME" \
-            "$REGISTRY_URL/releases/upload"
+            "$REGISTRY_URL/releases/upload")
+          HTTP_CODE=$(echo "$RESP" | tail -1)
+          echo "Server response (HTTP $HTTP_CODE): $(echo "$RESP" | head -n -1)"
+          [ "$HTTP_CODE" -ge 200 ] && [ "$HTTP_CODE" -lt 300 ] || exit 1
         env:
           REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
           REGISTRY_URL: ${{ secrets.REGISTRY_URL }}
@@ -154,11 +162,15 @@ jobs:
           FILE=$(ls dist-electron/*.exe 2>/dev/null | head -1)
           [ -z "$FILE" ] && echo "No exe found" && exit 1
           FILENAME=$(basename "$FILE")
-          curl -sf -X POST \
+          echo "Uploading $FILENAME ($(du -sh "$FILE" | cut -f1)) as v$VERSION / windows..."
+          RESP=$(curl -s -w "\n%{http_code}" -X POST \
             -H "Authorization: Bearer $REGISTRY_TOKEN" \
             -F "metadata={\"version\":\"$VERSION\",\"platform\":\"windows\",\"channel\":\"stable\",\"release_notes\":\"Release $VERSION\"}" \
             -F "file=@$FILE;filename=$FILENAME" \
-            "$REGISTRY_URL/releases/upload"
+            "$REGISTRY_URL/releases/upload")
+          HTTP_CODE=$(echo "$RESP" | tail -1)
+          echo "Server response (HTTP $HTTP_CODE): $(echo "$RESP" | head -n -1)"
+          [ "$HTTP_CODE" -ge 200 ] && [ "$HTTP_CODE" -lt 300 ] || exit 1
         env:
           REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
           REGISTRY_URL: ${{ secrets.REGISTRY_URL }}
@@ -175,11 +187,15 @@ jobs:
           FILE=$(ls dist-electron/*.AppImage 2>/dev/null | head -1)
           [ -z "$FILE" ] && echo "No AppImage found" && exit 1
           FILENAME=$(basename "$FILE")
-          curl -sf -X POST \
+          echo "Uploading $FILENAME ($(du -sh "$FILE" | cut -f1)) as v$VERSION / linux..."
+          RESP=$(curl -s -w "\n%{http_code}" -X POST \
             -H "Authorization: Bearer $REGISTRY_TOKEN" \
             -F "metadata={\"version\":\"$VERSION\",\"platform\":\"linux\",\"channel\":\"stable\",\"release_notes\":\"Release $VERSION\"}" \
             -F "file=@$FILE;filename=$FILENAME" \
-            "$REGISTRY_URL/releases/upload"
+            "$REGISTRY_URL/releases/upload")
+          HTTP_CODE=$(echo "$RESP" | tail -1)
+          echo "Server response (HTTP $HTTP_CODE): $(echo "$RESP" | head -n -1)"
+          [ "$HTTP_CODE" -ge 200 ] && [ "$HTTP_CODE" -lt 300 ] || exit 1
         env:
           REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
           REGISTRY_URL: ${{ secrets.REGISTRY_URL }}
@@ -199,11 +215,14 @@ jobs:
           fi
           VERSION="${GITHUB_REF_NAME#v}"
           echo "Promoting v$VERSION to latest..."
-          curl -sf -X POST \
+          RESP=$(curl -s -w "\n%{http_code}" -X POST \
             -H "Authorization: Bearer $REGISTRY_TOKEN" \
             -H "Content-Type: application/json" \
             -d "{\"version\":\"$VERSION\"}" \
-            "$REGISTRY_URL/releases/promote"
+            "$REGISTRY_URL/releases/promote")
+          HTTP_CODE=$(echo "$RESP" | tail -1)
+          echo "Server response (HTTP $HTTP_CODE): $(echo "$RESP" | head -n -1)"
+          [ "$HTTP_CODE" -ge 200 ] && [ "$HTTP_CODE" -lt 300 ] || exit 1
           echo "v$VERSION is now the latest stable release."
         env:
           REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
