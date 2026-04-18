@@ -1530,10 +1530,10 @@ releaseDate: '${releaseDate}'
     const metaRaw = form.get("metadata");
     if (!metaRaw) return jsonResponse({ error: "Missing metadata field" }, 400);
 
-    let meta: { version: string; platform: string; channel?: string; release_notes?: string; download_url?: string };
+    let meta: { version: string; platform: string; channel?: string; release_notes?: string; download_url?: string; sha512?: string };
     try { meta = JSON.parse(String(metaRaw)); } catch { return jsonResponse({ error: "Invalid metadata JSON" }, 400); }
 
-    const { version, platform, channel = "stable", release_notes = "", download_url } = meta;
+    const { version, platform, channel = "stable", release_notes = "", download_url, sha512: metaSha512 } = meta;
     if (!version || !platform) return jsonResponse({ error: "version and platform required in metadata" }, 400);
 
     const file = form.get("file") as File | null;
@@ -1542,11 +1542,15 @@ releaseDate: '${releaseDate}'
     if (!file && !download_url) {
       return jsonResponse({ error: "Provide either a binary file (file field) or a download_url in metadata" }, 400);
     }
+    // When using external URL, sha512 must be pre-computed by the caller (needed for electron-updater YAML)
+    if (!file && download_url && !metaSha512) {
+      return jsonResponse({ error: "sha512 (base64-encoded) is required in metadata when using download_url" }, 400);
+    }
 
     const now = new Date().toISOString();
-    let r2Key = "";
+    let r2Key = download_url ? "external" : "";
     let sha256 = "";
-    let sha512 = "";
+    let sha512 = metaSha512 ?? "";  // use caller-provided sha512 for external URL; overwritten below if file is uploaded
     let sizeBytes: number | null = null;
     let fileName = download_url ? `${platform}-external` : file!.name;
 
