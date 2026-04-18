@@ -23,23 +23,24 @@ asarUnpack:
   - "**/node_modules/node-pty/**"
 
 # 额外资源（放到 Resources/ 目录，server 二进制运行时通过 process.resourcesPath 访问）
+# mindact-server 由 prebuild.sh 生成（bun build --compile server.ts --outfile mindact-server）
+# 打包前必须先运行 bash scripts/prebuild.sh
 extraResources:
   - from: pty-worker.cjs
     to: pty-worker.cjs
   - from: client/dist
     to: client/dist
-  # mindact-server 由 prebuild.sh 生成（bun build --compile server.ts --outfile mindact-server）
-  # 打包前必须先运行 bash scripts/prebuild.sh
-  - from: mindact-server
-    to: mindact-server
 
 # 自动更新服务器地址（Cloudflare worker 提供 latest-*.yml）
 publish:
   provider: generic
   url: https://registry.physical-mind.ai/releases/electron
 
-# macOS
+# macOS — server binary 无扩展名
 mac:
+  extraResources:
+    - from: mindact-server
+      to: mindact-server
   target:
     - target: dmg
       arch: [x64, arm64]
@@ -59,8 +60,11 @@ dmg:
       y: 150
       type: file
 
-# Windows
+# Windows — bun compile 在 Windows 上强制加 .exe 扩展名
 win:
+  extraResources:
+    - from: mindact-server.exe
+      to: mindact-server.exe
   target:
     - target: nsis
       arch: [x64]
@@ -71,8 +75,11 @@ nsis:
   allowToChangeInstallationDirectory: false
   deleteAppDataOnUninstall: false
 
-# Linux
+# Linux — server binary 无扩展名
 linux:
+  extraResources:
+    - from: mindact-server
+      to: mindact-server
   target:
     - target: AppImage
       arch: [x64]

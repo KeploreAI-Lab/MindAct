@@ -24,7 +24,9 @@ function startServer() {
     return;
   }
 
-  const serverBin = path.join(process.resourcesPath, 'mindact-server');
+  // bun compile 在 Windows 上会加 .exe 扩展名
+  const serverBinName = process.platform === 'win32' ? 'mindact-server.exe' : 'mindact-server';
+  const serverBin = path.join(process.resourcesPath, serverBinName);
   const env = {
     ...process.env,
     // Electron 内置 Node.js 路径，server 用它来启动 pty-worker.cjs
