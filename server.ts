@@ -694,7 +694,7 @@ function spawnPty(ws: import("bun").ServerWebSocket<unknown>, projectPath: strin
 
   let worker: ReturnType<typeof Bun.spawn>;
   try {
-    worker = Bun.spawn(["node", PTY_WORKER], {
+    worker = Bun.spawn([process.env.NODE_BINARY || nodeBin, PTY_WORKER], {
       cwd,
       env: { ...process.env as Record<string, string>, PTY_CWD: cwd },
       stdin: "pipe",

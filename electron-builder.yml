@@ -1,0 +1,79 @@
+appId: com.keploreai.mindact
+productName: MindAct
+copyright: Copyright © 2025 KeploreAI
+
+# electron-builder 自动将 PNG 转为 .icns (macOS) 和 .ico (Windows)
+icon: build-resources/icon.png
+
+directories:
+  output: dist-electron
+  buildResources: build-resources
+
+# electron-main.cjs 作为 Electron 主进程入口（已在 package.json main 字段中声明）
+# beforeBuild 由 CI 中的 prebuild.sh 手动执行，electron-builder 不自动调用 shell 脚本
+files:
+  - electron-main.cjs
+  - preload.cjs
+  - package.json
+  - node_modules/**/*
+
+# 原生模块（node-pty）必须解包，不能放进 asar
+asarUnpack:
+  - "**/*.node"
+  - "**/node_modules/node-pty/**"
+
+# 额外资源（放到 Resources/ 目录，server 二进制运行时通过 process.resourcesPath 访问）
+extraResources:
+  - from: pty-worker.cjs
+    to: pty-worker.cjs
+  - from: client/dist
+    to: client/dist
+  # mindact-server 由 prebuild.sh 生成（bun build --compile server.ts --outfile mindact-server）
+  # 打包前必须先运行 bash scripts/prebuild.sh
+  - from: mindact-server
+    to: mindact-server
+
+# 自动更新服务器地址（Cloudflare worker 提供 latest-*.yml）
+publish:
+  provider: generic
+  url: https://registry.physical-mind.ai/releases/electron
+
+# macOS
+mac:
+  target:
+    - target: dmg
+      arch: [x64, arm64]
+    - target: zip
+      arch: [x64, arm64]
+  category: public.app-category.developer-tools
+  darkModeSupport: true
+
+dmg:
+  title: MindAct ${version}
+  contents:
+    - x: 410
+      y: 150
+      type: link
+      path: /Applications
+    - x: 130
+      y: 150
+      type: file
+
+# Windows
+win:
+  target:
+    - target: nsis
+      arch: [x64]
+
+nsis:
+  oneClick: true
+  perMachine: false
+  allowToChangeInstallationDirectory: false
+  deleteAppDataOnUninstall: false
+
+# Linux
+linux:
+  target:
+    - target: AppImage
+      arch: [x64]
+  category: Development

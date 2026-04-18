@@ -33,11 +33,24 @@ export default function App() {
   const setUiLanguage = useStore(s => s.setUiLanguage);
   const skillCreatorChatOpen = useStore(s => s.skillCreatorChatOpen);
 
+  const updateInfo = useStore(s => s.updateInfo);
+  const setUpdateInfo = useStore(s => s.setUpdateInfo);
+
   const [showSettings, setShowSettings] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
   const [showBrainInspect, setShowBrainInspect] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
   const dragging = useRef(false);
+
+  useEffect(() => {
+    // Listen for electron-updater "update-downloaded" IPC event → show update banner
+    const electronAPI = (window as any).electronAPI;
+    if (electronAPI?.onUpdateDownloaded) {
+      electronAPI.onUpdateDownloaded((info: { version: string }) => {
+        setUpdateInfo(info);
+      });
+    }
+  }, []);
 
   useEffect(() => {
     // Expose setPlatformTree globally for BrainInspect URL loader
@@ -177,6 +190,41 @@ export default function App() {
           {t(uiLanguage, "history")}
         </button>
       </div>
+
+      {/* Auto-update banner — only shown when a new version is downloaded and ready */}
+      {updateInfo && (
+        <div style={{
+          background: "#0057FF",
+          color: "#fff",
+          padding: "5px 16px",
+          fontSize: 13,
+          display: "flex",
+          alignItems: "center",
+          gap: 12,
+          flexShrink: 0,
+        }}>
+          <span>MindAct v{updateInfo.version} 已就绪</span>
+          <button
+            onClick={() => {
+              const api = (window as any).electronAPI;
+              if (api?.installUpdate) {
+                api.installUpdate();
+              } else {
+                alert("请重启 MindAct 以应用更新。");
+              }
+            }}
+            style={{ background: "rgba(255,255,255,0.2)", border: "none", color: "#fff", padding: "2px 10px", borderRadius: 4, cursor: "pointer", fontSize: 12 }}
+          >
+            重启以应用
+          </button>
+          <button
+            onClick={() => setUpdateInfo(null)}
+            style={{ background: "transparent", border: "none", color: "rgba(255,255,255,0.7)", cursor: "pointer", fontSize: 12 }}
+          >
+            稍后
+          </button>
+        </div>
+      )}
 
       {/* Main area */}
       <div ref={containerRef} style={{ display: "flex", flex: 1, overflow: "hidden" }}>

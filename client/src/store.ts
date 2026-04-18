@@ -135,6 +135,10 @@ interface AppState {
   pendingTerminalInput: string | null;
   setSkillCreatorChatOpen: (open: boolean, target?: string | null) => void;
   setPendingTerminalInput: (input: string | null) => void;
+
+  // Auto-update: set by electron-updater IPC when a new version is downloaded and staged
+  updateInfo: { version: string } | null;
+  setUpdateInfo: (info: { version: string } | null) => void;
 }
 
 let _logId = 0;
@@ -248,4 +252,7 @@ export const useStore = create<AppState>((set) => ({
   pendingTerminalInput: null,
   setSkillCreatorChatOpen: (open, target) => set({ skillCreatorChatOpen: open, skillCreatorChatTarget: target ?? null }),
   setPendingTerminalInput: (input) => set({ pendingTerminalInput: input }),
+
+  updateInfo: null,
+  setUpdateInfo: (info) => set({ updateInfo: info }),
 }));

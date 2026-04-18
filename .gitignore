@@ -7,7 +7,6 @@ research/
 skills-test/
 my_project/
 knowledge_base/
-scripts/
 .DS_Store
 **/.DS_Store
 .claw/
@@ -23,9 +22,8 @@ mindact-release*.zip
 /examples/skills
 /examples
 /cloudflare/admin
-/cloudflare/d1
-/cloudflare/r2
 create-release.sh
-/cloudflare
 .env.example
 INFRASTRUCTURE.md
+dist-electron/
+mindact-server
