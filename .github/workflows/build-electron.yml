@@ -113,8 +113,9 @@ jobs:
             exit 0
           fi
           VERSION="${GITHUB_REF_NAME#v}"
-          FILE=$(ls dist-electron/*.zip 2>/dev/null | head -1 || ls dist-electron/*.dmg 2>/dev/null | head -1)
-          [ -z "$FILE" ] && echo "No release file found" && exit 1
+          echo "=== dist-electron contents ==="; ls -lh dist-electron/ 2>/dev/null; echo "=============================="
+          FILE=$(find dist-electron -maxdepth 1 \( -name "*.zip" -o -name "*.dmg" \) | sort | head -1)
+          [ -z "$FILE" ] && echo "ERROR: No .zip or .dmg found in dist-electron/" && exit 1
           FILENAME=$(basename "$FILE")
           echo "Uploading $FILENAME as v$VERSION / mac-arm64..."
           TMPFILE=$(mktemp)
@@ -138,8 +139,9 @@ jobs:
             exit 0
           fi
           VERSION="${GITHUB_REF_NAME#v}"
-          FILE=$(ls dist-electron/*.zip 2>/dev/null | head -1 || ls dist-electron/*.dmg 2>/dev/null | head -1)
-          [ -z "$FILE" ] && echo "No release file found" && exit 1
+          echo "=== dist-electron contents ==="; ls -lh dist-electron/ 2>/dev/null; echo "=============================="
+          FILE=$(find dist-electron -maxdepth 1 \( -name "*.zip" -o -name "*.dmg" \) | sort | head -1)
+          [ -z "$FILE" ] && echo "ERROR: No .zip or .dmg found in dist-electron/" && exit 1
           FILENAME=$(basename "$FILE")
           echo "Uploading $FILENAME as v$VERSION / mac-x64..."
           TMPFILE=$(mktemp)
@@ -163,8 +165,9 @@ jobs:
             exit 0
           fi
           VERSION="${GITHUB_REF_NAME#v}"
-          FILE=$(ls dist-electron/*.exe 2>/dev/null | head -1)
-          [ -z "$FILE" ] && echo "No exe found" && exit 1
+          echo "=== dist-electron contents ==="; ls -lh dist-electron/ 2>/dev/null; echo "=============================="
+          FILE=$(find dist-electron -maxdepth 1 -name "*.exe" | sort | head -1)
+          [ -z "$FILE" ] && echo "ERROR: No .exe found in dist-electron/" && exit 1
           FILENAME=$(basename "$FILE")
           echo "Uploading $FILENAME as v$VERSION / windows..."
           TMPFILE=$(mktemp)
@@ -188,8 +191,9 @@ jobs:
             exit 0
           fi
           VERSION="${GITHUB_REF_NAME#v}"
-          FILE=$(ls dist-electron/*.AppImage 2>/dev/null | head -1)
-          [ -z "$FILE" ] && echo "No AppImage found" && exit 1
+          echo "=== dist-electron contents ==="; ls -lh dist-electron/ 2>/dev/null; echo "=============================="
+          FILE=$(find dist-electron -maxdepth 1 -name "*.AppImage" | sort | head -1)
+          [ -z "$FILE" ] && echo "ERROR: No .AppImage found in dist-electron/" && exit 1
           FILENAME=$(basename "$FILE")
           echo "Uploading $FILENAME as v$VERSION / linux..."
           TMPFILE=$(mktemp)
