@@ -27,3 +27,5 @@ mindact-release*.zip
 /cloudflare/r2
 create-release.sh
 /cloudflare
+.env.example
+INFRASTRUCTURE.md

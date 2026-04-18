@@ -11,6 +11,9 @@ export interface Config {
   panel_ratio: number;
   kplr_token?: string;
   minimax_token?: string;
+  glm_token?: string;
+  anthropic_token?: string;
+  selected_backend?: "minimax" | "anthropic" | "glm";
   account_token?: string;   // mact_xxx — MindAct user token for registry sync
   registry_url?: string;    // Override default registry URL
   admin_url?: string;       // Override default admin UI URL (for auth redirect)
@@ -125,6 +128,13 @@ interface AppState {
   clearLog: () => void;
   setLogDrawerOpen: (v: boolean) => void;
   setAnalysisProgress: (p: { current: number; total: number; fileName: string } | null) => void;
+
+  // Skill creator chat window
+  skillCreatorChatOpen: boolean;
+  skillCreatorChatTarget: string | null;
+  pendingTerminalInput: string | null;
+  setSkillCreatorChatOpen: (open: boolean, target?: string | null) => void;
+  setPendingTerminalInput: (input: string | null) => void;
 }
 
 let _logId = 0;
@@ -232,4 +242,10 @@ export const useStore = create<AppState>((set) => ({
   clearLog: () => set({ logEntries: [] }),
   setLogDrawerOpen: (v) => set({ logDrawerOpen: v }),
   setAnalysisProgress: (p) => set({ analysisProgress: p }),
+
+  skillCreatorChatOpen: false,
+  skillCreatorChatTarget: null,
+  pendingTerminalInput: null,
+  setSkillCreatorChatOpen: (open, target) => set({ skillCreatorChatOpen: open, skillCreatorChatTarget: target ?? null }),
+  setPendingTerminalInput: (input) => set({ pendingTerminalInput: input }),
 }));

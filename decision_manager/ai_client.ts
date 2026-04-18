@@ -1,7 +1,7 @@
 /**
  * Thin wrapper around AI APIs.
- * Prefers MiniMax when a MINIMAX_KEY is found, then KeploreAI (DashScope-compatible)
- * when a kplr-... key is found, falls back to Anthropic SDK otherwise.
+ * Backend is selected by the user in Settings (stored in ~/.physmind/config.json as selected_backend).
+ * Falls back to key-presence heuristic: MiniMax > KeploreAI > GLM > Anthropic.
  */
 
 import Anthropic from "@anthropic-ai/sdk";
@@ -23,40 +23,63 @@ const MINIMAX_BASE_URL = "https://api.minimax.io/anthropic";
 const MINIMAX_DEFAULT_MODEL = "minimax-m2.7";
 const MINIMAX_FAST_MODEL = "minimax-m2.7";
 
-function readMinimaxKey(): string | null {
-  const credFile = join(homedir(), ".config", "physmind", "credentials");
+// GLM / 智谱AI (OpenAI-compatible)
+const GLM_BASE_URL = "https://open.bigmodel.cn/api/paas/v4";
+const GLM_DEFAULT_MODEL = "glm-4-plus";
+const GLM_FAST_MODEL = "glm-4-flash";
+
+// ── Credential / config readers ──────────────────────────────────────────────
+
+function physmindCredFile(): string {
+  return join(homedir(), ".config", "physmind", "credentials");
+}
+
+function readCredKey(prefix: string): string | null {
+  const credFile = physmindCredFile();
   if (!existsSync(credFile)) return null;
   try {
     for (const line of readFileSync(credFile, "utf-8").split("\n")) {
-      const m = line.match(/^MINIMAX_KEY="?([^"]+)"?/);
+      const m = line.match(new RegExp(`^${prefix}="?([^"]+)"?`));
       if (m) return m[1].trim();
     }
   } catch {}
   return null;
 }
 
-function readKplrKey(): string | null {
-  const credFile = join(homedir(), ".config", "physmind", "credentials");
-  if (!existsSync(credFile)) return null;
+function readMinimaxKey(): string | null { return readCredKey("MINIMAX_KEY"); }
+function readKplrKey(): string | null { return readCredKey("KPLR_KEY"); }
+function readGlmKey(): string | null { return readCredKey("GLM_KEY"); }
+
+function readSelectedBackend(): "minimax" | "anthropic" | "glm" | "kplr" | null {
   try {
-    for (const line of readFileSync(credFile, "utf-8").split("\n")) {
-      const m = line.match(/^KPLR_KEY="?([^"]+)"?/);
-      if (m) return m[1].trim();
-    }
+    const cfgFile = join(homedir(), ".physmind", "config.json");
+    if (!existsSync(cfgFile)) return null;
+    const cfg = JSON.parse(readFileSync(cfgFile, "utf-8"));
+    const b = cfg.selected_backend;
+    if (b === "minimax" || b === "anthropic" || b === "glm") return b;
   } catch {}
   return null;
 }
 
+// ── Model name mapping ───────────────────────────────────────────────────────
+
+function toMinimaxModel(_model: string): string { return MINIMAX_DEFAULT_MODEL; }
 function toDashScopeModel(model: string): string {
   return model === FAST_MODEL ? DASHSCOPE_FAST_MODEL : DASHSCOPE_DEFAULT_MODEL;
 }
+function toGlmModel(model: string): string {
+  return model === FAST_MODEL ? GLM_FAST_MODEL : GLM_DEFAULT_MODEL;
+}
 
-// ── DashScope (OpenAI-compatible) via native fetch ───────────────────────────
+// ── OpenAI-compatible fetch helpers (DashScope / GLM) ───────────────────────
 
 interface DSMessage { role: "system" | "user" | "assistant"; content: string; }
 
-async function dsCall(apiKey: string, model: string, messages: DSMessage[], maxTokens: number, temperature?: number): Promise<string> {
-  const res = await fetch(`${KPLR_BASE_URL}/chat/completions`, {
+async function dsCall(
+  apiKey: string, model: string, messages: DSMessage[],
+  maxTokens: number, temperature?: number, baseUrl: string = KPLR_BASE_URL,
+): Promise<string> {
+  const res = await fetch(`${baseUrl}/chat/completions`, {
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
     body: JSON.stringify({ model, messages, max_tokens: maxTokens, ...(temperature !== undefined ? { temperature } : {}) }),
@@ -66,8 +89,13 @@ async function dsCall(apiKey: string, model: string, messages: DSMessage[], maxT
   return data.choices[0].message.content;
 }
 
-async function dsStream(apiKey: string, model: string, messages: DSMessage[], maxTokens: number, temperature: number | undefined, onChunk: (t: string) => void, onDone?: (t: string) => void): Promise<void> {
-  const res = await fetch(`${KPLR_BASE_URL}/chat/completions`, {
+async function dsStream(
+  apiKey: string, model: string, messages: DSMessage[],
+  maxTokens: number, temperature: number | undefined,
+  onChunk: (t: string) => void, onDone?: (t: string) => void,
+  baseUrl: string = KPLR_BASE_URL,
+): Promise<void> {
+  const res = await fetch(`${baseUrl}/chat/completions`, {
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
     body: JSON.stringify({ model, messages, max_tokens: maxTokens, stream: true, ...(temperature !== undefined ? { temperature } : {}) }),
@@ -106,16 +134,36 @@ function getMinimaxClient(apiKey: string): Anthropic {
 }
 
 let _client: Anthropic | null = null;
-function getAnthropicClient(): Anthropic {
+function getAnthropicClient(apiKey?: string): Anthropic {
   if (_client) return _client;
-  const apiKey = process.env.ANTHROPIC_API_KEY;
-  if (!apiKey) throw new Error("ANTHROPIC_API_KEY is not set");
-  _client = new Anthropic({ apiKey });
+  const key = apiKey ?? process.env.ANTHROPIC_API_KEY;
+  if (!key) throw new Error("ANTHROPIC_API_KEY is not set");
+  _client = new Anthropic({ apiKey: key });
   return _client;
 }
 
-function toMinimaxModel(model: string): string {
-  return model === FAST_MODEL ? MINIMAX_FAST_MODEL : MINIMAX_DEFAULT_MODEL;
+// ── Backend resolution ───────────────────────────────────────────────────────
+
+type Backend = "minimax" | "anthropic" | "glm" | "kplr";
+
+function resolveBackend(): { backend: Backend; minimaxKey: string | null; kplrKey: string | null; glmKey: string | null } {
+  const minimaxKey = readMinimaxKey() ?? process.env.MINIMAX_KEY ?? null;
+  const kplrKey = readKplrKey() ?? process.env.KPLR_KEY ?? null;
+  const glmKey = readGlmKey() ?? process.env.GLM_KEY ?? null;
+  const selected = readSelectedBackend();
+
+  let backend: Backend;
+  if (selected === "minimax" && minimaxKey) backend = "minimax";
+  else if (selected === "anthropic") backend = "anthropic";
+  else if (selected === "glm" && glmKey) backend = "glm";
+  else if (selected) {
+    // Selected backend key missing — fall back by presence
+    backend = minimaxKey ? "minimax" : kplrKey ? "kplr" : glmKey ? "glm" : "anthropic";
+  } else {
+    // No explicit selection — legacy heuristic
+    backend = minimaxKey ? "minimax" : kplrKey ? "kplr" : glmKey ? "glm" : "anthropic";
+  }
+  return { backend, minimaxKey, kplrKey, glmKey };
 }
 
 // ── Public API ───────────────────────────────────────────────────────────────
@@ -131,12 +179,11 @@ export interface AiCallOptions {
 }
 
 export async function aiCall(opts: AiCallOptions): Promise<string> {
-  const minimaxKey = readMinimaxKey() ?? process.env.MINIMAX_KEY;
-  const kplrKey = readKplrKey() ?? process.env.KPLR_KEY;
+  const { backend, minimaxKey, kplrKey, glmKey } = resolveBackend();
   const model = opts.model ?? DEFAULT_MODEL;
   const maxTokens = opts.maxTokens ?? DEFAULT_MAX_TOKENS;
 
-  if (minimaxKey) {
+  if (backend === "minimax" && minimaxKey) {
     const client = getMinimaxClient(minimaxKey);
     const response = await client.messages.create({
       model: toMinimaxModel(model), max_tokens: maxTokens, temperature: opts.temperature,
@@ -147,14 +194,23 @@ export async function aiCall(opts: AiCallOptions): Promise<string> {
     return block.text;
   }
 
-  if (kplrKey) {
+  if (backend === "glm" && glmKey) {
+    const msgs: DSMessage[] = [];
+    if (opts.system) msgs.push({ role: "system", content: opts.system });
+    for (const m of opts.messages) msgs.push({ role: m.role, content: m.content });
+    return dsCall(glmKey, toGlmModel(model), msgs, maxTokens, opts.temperature, GLM_BASE_URL);
+  }
+
+  if (backend === "kplr" && kplrKey) {
     const msgs: DSMessage[] = [];
     if (opts.system) msgs.push({ role: "system", content: opts.system });
     for (const m of opts.messages) msgs.push({ role: m.role, content: m.content });
     return dsCall(kplrKey, toDashScopeModel(model), msgs, maxTokens, opts.temperature);
   }
 
-  const client = getAnthropicClient();
+  // Anthropic fallback
+  const anthropicKey = process.env.ANTHROPIC_API_KEY;
+  const client = getAnthropicClient(anthropicKey);
   const response = await client.messages.create({
     model, max_tokens: maxTokens, temperature: opts.temperature,
     system: opts.system, messages: opts.messages,
@@ -170,12 +226,11 @@ export interface StreamCallOptions extends AiCallOptions {
 }
 
 export async function aiStream(opts: StreamCallOptions): Promise<void> {
-  const minimaxKey = readMinimaxKey() ?? process.env.MINIMAX_KEY;
-  const kplrKey = readKplrKey() ?? process.env.KPLR_KEY;
+  const { backend, minimaxKey, kplrKey, glmKey } = resolveBackend();
   const model = opts.model ?? DEFAULT_MODEL;
   const maxTokens = opts.maxTokens ?? DEFAULT_MAX_TOKENS;
 
-  if (minimaxKey) {
+  if (backend === "minimax" && minimaxKey) {
     const client = getMinimaxClient(minimaxKey);
     let fullText = "";
     const stream = await client.messages.stream({
@@ -192,14 +247,23 @@ export async function aiStream(opts: StreamCallOptions): Promise<void> {
     return;
   }
 
-  if (kplrKey) {
+  if (backend === "glm" && glmKey) {
+    const msgs: DSMessage[] = [];
+    if (opts.system) msgs.push({ role: "system", content: opts.system });
+    for (const m of opts.messages) msgs.push({ role: m.role, content: m.content });
+    return dsStream(glmKey, toGlmModel(model), msgs, maxTokens, opts.temperature, opts.onChunk, opts.onDone, GLM_BASE_URL);
+  }
+
+  if (backend === "kplr" && kplrKey) {
     const msgs: DSMessage[] = [];
     if (opts.system) msgs.push({ role: "system", content: opts.system });
     for (const m of opts.messages) msgs.push({ role: m.role, content: m.content });
     return dsStream(kplrKey, toDashScopeModel(model), msgs, maxTokens, opts.temperature, opts.onChunk, opts.onDone);
   }
 
-  const client = getAnthropicClient();
+  // Anthropic fallback
+  const anthropicKey = process.env.ANTHROPIC_API_KEY;
+  const client = getAnthropicClient(anthropicKey);
   let fullText = "";
   const stream = await client.messages.stream({
     model, max_tokens: maxTokens, temperature: opts.temperature,

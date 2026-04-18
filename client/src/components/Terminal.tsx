@@ -47,6 +47,10 @@ function Terminal() {
 
   const [installingSkillCreator, setInstallingSkillCreator] = useState(false);
 
+  // Forward pendingTerminalInput from store → PTY (used by SkillCreatorChat window)
+  const pendingTerminalInput = useStore(s => s.pendingTerminalInput);
+  const setPendingTerminalInputStore = useStore(s => s.setPendingTerminalInput);
+
   // /auth & /login — MindAct account sign-in flow
   const authPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const openAuthFlow = useCallback(() => {
@@ -147,6 +151,14 @@ function Terminal() {
     for (const ch of text) sendToPty(ch);
     sendToPty("\r");
   }, [sendToPty, addHistoryEntry]);
+
+  // When SkillCreatorChat queues a message, forward it to the PTY
+  useEffect(() => {
+    if (pendingTerminalInput !== null) {
+      submitInput(pendingTerminalInput);
+      setPendingTerminalInputStore(null);
+    }
+  }, [pendingTerminalInput, submitInput, setPendingTerminalInputStore]);
 
   const runDependencyAnalysis = useCallback(async (task: string) => {
     lastAnalysisTaskRef.current = task;
@@ -529,6 +541,15 @@ function Terminal() {
             ) {
               setIsThinking(false);
               hideSplash();
+              // Flush assistant buffer to chatHistory so SkillCreatorChat displays responses
+              if (h.waitingForAssistant && h.assistantBuffer.trim()) {
+                const preview = stripAnsi(h.assistantBuffer).replace(/\s+/g, " ").trim().slice(0, 300);
+                if (preview) {
+                  addHistoryEntry({ id: h.entryCounter++, role: "assistant", text: preview, line: h.lastAssistantLine });
+                }
+                h.assistantBuffer = "";
+                h.waitingForAssistant = false;
+              }
             }
             // Scroll management: if user was at the bottom, follow new output.
             // If they scrolled up to read history, restore their position after the
@@ -853,8 +874,8 @@ function Terminal() {
         />
       )}
 
-      {/* Skill Contribution Panel — shown when analysis finds missing skill DDs */}
-      {skillRequestData && !contributeTarget && (
+      {/* Skill Contribution Panel — hidden (redundant with "Missing knowledge · click to create") */}
+      {false && skillRequestData && !contributeTarget && (
         <div style={{
           position: "absolute", bottom: 80, left: 12, right: 12, zIndex: 110,
           background: "#16100a", border: "1px solid #c8a45a55", borderRadius: 8,

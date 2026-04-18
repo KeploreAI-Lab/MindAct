@@ -33,6 +33,8 @@ interface Config {
   account_token?: string;
   /** Optional: Admin UI URL override (for auth redirect flow). */
   admin_url?: string;
+  /** Which AI backend to use: minimax | anthropic | glm */
+  selected_backend?: "minimax" | "anthropic" | "glm";
 }
 
 function slugifySkillName(name: string): string {
@@ -225,6 +227,9 @@ function normalizeConfig(raw: any): Config | null {
   if (raw.registry_url) config.registry_url = String(raw.registry_url);
   if (raw.account_token) config.account_token = String(raw.account_token);
   if (raw.admin_url) config.admin_url = String(raw.admin_url);
+  if (raw.selected_backend && ["minimax", "anthropic", "glm"].includes(raw.selected_backend)) {
+    config.selected_backend = raw.selected_backend as Config["selected_backend"];
+  }
   return config;
 }
 
@@ -302,6 +307,30 @@ function readMinimaxCredentials(): string | null {
     const lines = readFileSync(credFile, "utf-8").split("\n");
     for (const line of lines) {
       const m = line.match(/^MINIMAX_KEY="?([^"]+)"?/);
+      if (m) return m[1].trim();
+    }
+  } catch {}
+  return null;
+}
+
+function saveGlmCredentials(key: string) {
+  const credDir = join(homedir(), ".config", "physmind");
+  const credFile = join(credDir, "credentials");
+  if (!existsSync(credDir)) mkdirSync(credDir, { recursive: true });
+  let existing = "";
+  try { existing = existsSync(credFile) ? readFileSync(credFile, "utf-8") : ""; } catch {}
+  const lines = existing.split("\n").filter(l => !l.startsWith("GLM_KEY=") && l.trim() !== "");
+  lines.push(`GLM_KEY="${key}"`);
+  writeFileSync(credFile, lines.join("\n") + "\n");
+}
+
+function readGlmCredentials(): string | null {
+  const credFile = join(homedir(), ".config", "physmind", "credentials");
+  if (!existsSync(credFile)) return null;
+  try {
+    const lines = readFileSync(credFile, "utf-8").split("\n");
+    for (const line of lines) {
+      const m = line.match(/^GLM_KEY="?([^"]+)"?/);
       if (m) return m[1].trim();
     }
   } catch {}
@@ -842,16 +871,20 @@ h2{color:#4ec9b0;margin:0;}p{color:#666;font-size:13px;margin:0;}</style></head>
         const config = readConfig();
         const kplr_token = readKplrCredentials();
         const minimax_token = readMinimaxCredentials();
-        return jsonResponse(config ? { ...config, kplr_token, minimax_token } : null);
+        const glm_token = readGlmCredentials();
+        return jsonResponse(config ? { ...config, kplr_token, minimax_token, glm_token } : null);
       }
       if (req.method === "POST") {
-        return req.json().then((body: Config & { kplr_token?: string; minimax_token?: string }) => {
+        return req.json().then((body: Config & { kplr_token?: string; minimax_token?: string; glm_token?: string }) => {
           // Save keys first, independently of path config validation
           if (body.kplr_token?.startsWith("kplr-")) {
             saveKplrCredentials(body.kplr_token);
           }
           if (body.minimax_token) {
             saveMinimaxCredentials(body.minimax_token);
+          }
+          if (body.glm_token) {
+            saveGlmCredentials(body.glm_token);
           }
           const normalized = normalizeConfig(body);
           if (normalized) writeConfig(normalized);

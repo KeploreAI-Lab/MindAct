@@ -117,35 +117,36 @@ function physmindConfigDir() {
   return path.join(require('os').homedir(), '.config', 'physmind');
 }
 
-// Read kplr key from the credentials file.
-function readKplrKey() {
+// Read a key from the credentials file by prefix (e.g. 'KPLR_KEY', 'MINIMAX_KEY', 'GLM_KEY').
+function readCredKey(prefix) {
   try {
     const credFile = path.join(physmindConfigDir(), 'credentials');
     if (!fs.existsSync(credFile)) return null;
     const lines = fs.readFileSync(credFile, 'utf-8').split('\n');
     for (const line of lines) {
-      const m = line.match(/^KPLR_KEY="?([^"]+)"?/);
+      const m = line.match(new RegExp('^' + prefix + '="?([^"]+)"?'));
       if (m) return m[1].trim();
     }
   } catch {}
   return null;
 }
 
-// Read Minimax key from the credentials file.
-function readMinimaxKey() {
+function readKplrKey() { return readCredKey('KPLR_KEY'); }
+function readMinimaxKey() { return readCredKey('MINIMAX_KEY'); }
+function readGlmKey() { return readCredKey('GLM_KEY'); }
+
+// Read the MindAct config file to get selected_backend.
+function readMindActConfig() {
   try {
-    const credFile = path.join(physmindConfigDir(), 'credentials');
-    if (!fs.existsSync(credFile)) return null;
-    const lines = fs.readFileSync(credFile, 'utf-8').split('\n');
-    for (const line of lines) {
-      const m = line.match(/^MINIMAX_KEY="?([^"]+)"?/);
-      if (m) return m[1].trim();
-    }
-  } catch {}
-  return null;
+    const cfgFile = path.join(require('os').homedir(), '.physmind', 'config.json');
+    if (!fs.existsSync(cfgFile)) return null;
+    return JSON.parse(fs.readFileSync(cfgFile, 'utf-8'));
+  } catch { return null; }
 }
 
-// Build the environment: strip Anthropic credentials, inject KPLR/DashScope or Minimax keys.
+// Build the environment: strip Anthropic credentials, inject the appropriate backend keys.
+// The PhysMind CLI is Anthropic-compatible, so we only support MiniMax and KPLR as
+// terminal backends. GLM (OpenAI-only) powers analysis features via ai_client.ts.
 function buildClawEnv(cols, rows) {
   const env = { ...process.env };
   // Explicitly set terminal dimensions so Ink/physmind reads the correct column
@@ -155,26 +156,68 @@ function buildClawEnv(cols, rows) {
   if (rows) env.LINES = String(rows);
   delete env.ANTHROPIC_API_KEY;
   delete env.ANTHROPIC_AUTH_TOKEN;
+
+  const cfg = readMindActConfig();
+  const selectedBackend = cfg && cfg.selected_backend;
   const minimaxKey = readMinimaxKey() || env.MINIMAX_API_KEY;
   const kplrKey = readKplrKey() || env.KPLR_KEY;
-  if (minimaxKey) {
+
+  // Resolve which terminal backend to activate
+  let useBackend = null;
+  if (selectedBackend === 'minimax' && minimaxKey) useBackend = 'minimax';
+  else if (selectedBackend === 'anthropic') useBackend = 'anthropic';
+  else if (selectedBackend === 'glm') {
+    // GLM is not Anthropic-compatible — fall back to MiniMax or KPLR if available
+    if (minimaxKey) useBackend = 'minimax';
+    else if (kplrKey) useBackend = 'kplr';
+    // else: no terminal backend (will be caught by hasTerminalKey)
+  } else if (minimaxKey) useBackend = 'minimax';
+  else if (kplrKey) useBackend = 'kplr';
+  else useBackend = 'anthropic';
+
+  // Clear model-override vars inherited from process.env; each backend block
+  // sets only what it needs, so switching providers never leaves stale values.
+  delete env.ANTHROPIC_MODEL;
+  delete env.ANTHROPIC_CUSTOM_MODEL_OPTION;
+  delete env.CLAUDE_CODE_SIMPLE;
+
+  if (useBackend === 'minimax' && minimaxKey) {
     env.MINIMAX_API_KEY = minimaxKey;
     env.ANTHROPIC_API_KEY = minimaxKey;
     env.ANTHROPIC_BASE_URL = 'https://api.minimax.io/anthropic';
+    // Model vars are specific to MiniMax — set here, not globally.
+    env.ANTHROPIC_MODEL = 'minimax-m2.7';
+    env.ANTHROPIC_CUSTOM_MODEL_OPTION = 'minimax-m2.7';
+    env.CLAUDE_CODE_SIMPLE = '1';
     delete env.KPLR_KEY;
     delete env.DASHSCOPE_API_KEY;
     delete env.DASHSCOPE_BASE_URL;
-  } else if (kplrKey) {
+  } else if (useBackend === 'kplr' && kplrKey) {
     env.KPLR_KEY = kplrKey;
     env.DASHSCOPE_API_KEY = kplrKey;
     // Always inject proxy URL so physmind routes to KeploreAI
     env.DASHSCOPE_BASE_URL = 'https://physmind-proxy.marvin-gao-cs.workers.dev/v1';
     delete env.MINIMAX_API_KEY;
+    delete env.ANTHROPIC_BASE_URL;
+  } else if (useBackend === 'anthropic') {
+    // Pass through ANTHROPIC_API_KEY from the environment (already deleted above, re-read)
+    const anthropicKey = process.env.ANTHROPIC_API_KEY;
+    if (anthropicKey) env.ANTHROPIC_API_KEY = anthropicKey;
+    delete env.MINIMAX_API_KEY;
+    delete env.DASHSCOPE_API_KEY;
+    delete env.KPLR_KEY;
+    delete env.DASHSCOPE_BASE_URL;
+    delete env.ANTHROPIC_BASE_URL;
   } else {
     delete env.DASHSCOPE_API_KEY;
     delete env.KPLR_KEY;
     delete env.MINIMAX_API_KEY;
+    delete env.ANTHROPIC_BASE_URL;
   }
+  // Skip physmind's interactive "Select model backend:" prompt — pty-worker
+  // already injects the correct ANTHROPIC_BASE_URL / ANTHROPIC_API_KEY so
+  // the prompt is redundant and only causes noise in the terminal.
+  env.CLAUDE_MODEL_SELECTION_DONE = '1';
   // Isolate physmind config so saved Anthropic OAuth tokens are never read
   env.CLAW_CONFIG_HOME = path.join(physmindConfigDir(), 'claw');
   if (process.platform !== 'win32') {
@@ -184,8 +227,33 @@ function buildClawEnv(cols, rows) {
   return env;
 }
 
-function hasKplrKey() {
-  return !!(readKplrKey() || process.env.KPLR_KEY || readMinimaxKey() || process.env.MINIMAX_API_KEY);
+// Returns true if there's a working terminal backend available.
+function hasTerminalKey() {
+  const cfg = readMindActConfig();
+  const selectedBackend = cfg && cfg.selected_backend;
+  const minimaxKey = readMinimaxKey() || process.env.MINIMAX_API_KEY;
+  const kplrKey = readKplrKey() || process.env.KPLR_KEY;
+  if (selectedBackend === 'anthropic') return !!(process.env.ANTHROPIC_API_KEY);
+  if (selectedBackend === 'glm') return !!(minimaxKey || kplrKey); // GLM falls back to minimax/kplr
+  return !!(minimaxKey || kplrKey);
+}
+
+// Returns a label for the active terminal backend.
+function getTerminalBackendLabel() {
+  const cfg = readMindActConfig();
+  const selectedBackend = cfg && cfg.selected_backend;
+  const minimaxKey = readMinimaxKey() || process.env.MINIMAX_API_KEY;
+  const kplrKey = readKplrKey() || process.env.KPLR_KEY;
+  if (selectedBackend === 'minimax' && minimaxKey) return 'MiniMax M2.7';
+  if (selectedBackend === 'anthropic') return 'Claude (Anthropic)';
+  if (selectedBackend === 'glm') {
+    if (minimaxKey) return 'MiniMax M2.7 (GLM fallback for terminal)';
+    if (kplrKey) return 'KeploreAI (GLM fallback for terminal)';
+    return null;
+  }
+  if (minimaxKey) return 'MiniMax M2.7';
+  if (kplrKey) return 'KeploreAI';
+  return null;
 }
 
 let term = null;
@@ -201,21 +269,30 @@ function spawnTerm(cols, rows) {
   rows = rows || 40;
   if (term) { try { term.kill(); } catch {} }
 
-  if (!hasKplrKey()) {
-    send({
-      type: 'data',
-      data: '\r\n\x1b[31m[PhysMind] No MiniMax API key found.\x1b[0m\r\n' +
-            '\x1b[90mOption 1: Go to Settings and enter your MiniMax API key (sk-api-...).\x1b[0m\r\n' +
-            '\x1b[90mOption 2: Add it manually to ~/.config/physmind/credentials:\x1b[0m\r\n' +
-            '\x1b[90m  MINIMAX_KEY="sk-api-..."\x1b[0m\r\n\r\n',
-    });
+  if (!hasTerminalKey()) {
+    const cfg = readMindActConfig();
+    const isGlm = cfg && cfg.selected_backend === 'glm';
+    if (isGlm) {
+      send({
+        type: 'data',
+        data: '\r\n\x1b[33m[PhysMind] GLM backend is active for analysis features.\x1b[0m\r\n' +
+              '\x1b[90mThe AI terminal requires a MiniMax or Anthropic key.\x1b[0m\r\n' +
+              '\x1b[90mGo to Settings and add a MiniMax API key (sk-api-...) to enable the terminal.\x1b[0m\r\n\r\n',
+      });
+    } else {
+      send({
+        type: 'data',
+        data: '\r\n\x1b[31m[PhysMind] No API key configured.\x1b[0m\r\n' +
+              '\x1b[90mGo to Settings and select a model backend, then enter your API key.\x1b[0m\r\n\r\n',
+      });
+    }
     return;
   }
 
   // Show which backend is active
-  const minimaxKey = readMinimaxKey() || process.env.MINIMAX_API_KEY;
-  if (minimaxKey) {
-    send({ type: 'data', data: '\r\n\x1b[32m[PhysMind] Backend: MiniMax M2.7\x1b[0m\r\n\r\n' });
+  const backendLabel = getTerminalBackendLabel();
+  if (backendLabel) {
+    send({ type: 'data', data: '\r\n\x1b[32m[PhysMind] Backend: ' + backendLabel + '\x1b[0m\r\n\r\n' });
   }
 
   const entry = resolveEntryCommand();
@@ -250,9 +327,43 @@ function spawnTerm(cols, rows) {
     process.exit(1);
   }
 
-  term.onData((data) => {
-    // Replace internal credential error messages with user-friendly text.
-    let filtered = data
+  // ── Startup model-selection prompt suppression ──────────────────────────────
+  // CLAUDE_MODEL_SELECTION_DONE=1 is injected via buildClawEnv, so physmind
+  // skips its interactive "Select model backend:" prompt entirely.
+  // selectionPhase stays false — all PTY output flows through immediately.
+  let selectionPhase = false;
+  let selectionBuf = '';
+
+  // Determine which numeric choice to send to the upstream CLI:
+  //   1 = Claude (Anthropic)
+  //   2 = MiniMax
+  // GLM is not a native CLI option, so we use the best Anthropic-compatible
+  // backend available (MiniMax preferred, then Claude).
+  function resolveCliChoice() {
+    const cfg = readMindActConfig();
+    const sel = cfg && cfg.selected_backend;
+    const minimaxKey = readMinimaxKey() || process.env.MINIMAX_API_KEY;
+    if (sel === 'anthropic') return '1';
+    if (sel === 'glm') return minimaxKey ? '2' : '1';
+    // minimax (default) or any key-presence fallback
+    return minimaxKey ? '2' : '1';
+  }
+
+  // Safety timeout: if the selection prompt never appears (e.g., future CLI
+  // version removes it), stop suppressing output after 4 seconds.
+  const selectionTimeout = setTimeout(() => {
+    if (!selectionPhase) return;
+    selectionPhase = false;
+    if (selectionBuf) {
+      // Flush whatever was buffered (minus the partial prompt if any)
+      const cleaned = applyOutputFilters(selectionBuf);
+      if (cleaned) send({ type: 'data', data: cleaned });
+      selectionBuf = '';
+    }
+  }, 4000);
+
+  function applyOutputFilters(raw) {
+    let filtered = raw
       .replace(/missing DashScope credentials[^\r\n]*/g, 'No KeploreAI key found. Go to Settings and enter your kplr-... key.')
       .replace(/missing Anthropic credentials[^\r\n]*/g, 'No KeploreAI key found. Go to Settings and enter your kplr-... key.')
       .replace(/export ANTHROPIC_AUTH_TOKEN[^\r\n]*/g, '')
@@ -260,24 +371,40 @@ function spawnTerm(cols, rows) {
       .replace(/ANTHROPIC_AUTH_TOKEN[^\r\n]*/g, '')
       .replace(/export DASHSCOPE_API_KEY[^\r\n]*/g, '')
       .replace(/DASHSCOPE_API_KEY[^\r\n]*/g, '');
-    // Replace the physmind internal build version with the MindAct version so
-    // the terminal banner shows "PhysMind v{mindact version}" instead of the
-    // upstream Claude Code version bundled inside physmind.
     if (PHYSMIND_MACRO_VERSION) {
       filtered = filtered.replace(
         new RegExp('v' + PHYSMIND_MACRO_VERSION.replace(/\./g, '\\.'), 'g'),
         'v' + MINDACT_VERSION
       );
     }
-    // Replace the upstream "Opus 1M context" upgrade notice with a
-    // PhysMind-specific tip about account sign-in and dependency sync.
     filtered = filtered.replace(
       /Opus now defaults to 1M context · 5x more room, same pricing/g,
       'Sign in to sync Decision Dependencies automatically across devices · /auth'
     );
-    // Replace residual "Claude Code" brand references with "PhysMind".
     filtered = filtered.replace(/Claude Code/g, 'PhysMind');
-    send({ type: 'data', data: filtered });
+    return filtered;
+  }
+
+  term.onData((data) => {
+    if (selectionPhase) {
+      selectionBuf += data;
+      // Detect the model-selection prompt ("Choice [1/2]:" or "Choice [1/2/3]:" etc.)
+      if (/Choice\s*\[\d[^\]]*\]\s*:/.test(selectionBuf) || selectionBuf.includes('Choice [1/2]')) {
+        clearTimeout(selectionTimeout);
+        selectionPhase = false;
+        selectionBuf = '';
+        // Auto-answer — the CLI reads a single digit followed by Enter
+        const choice = resolveCliChoice();
+        try { term.write(choice + '\r'); } catch {}
+        // Suppress the entire selection UI — do not send anything to the frontend.
+        return;
+      }
+      // Still buffering — suppress until we know whether there's a prompt
+      return;
+    }
+
+    // Normal post-selection output processing
+    send({ type: 'data', data: applyOutputFilters(data) });
   });
 
   // After physmind finishes its initial render (~500ms), force a SIGWINCH so it

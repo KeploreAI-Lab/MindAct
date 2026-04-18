@@ -9,6 +9,7 @@ import HistoryPanel from "./components/HistoryPanel";
 import BrainInspect from "./components/BrainInspect";
 import { t } from "./i18n";
 import GraphLogDrawer from "./components/GraphLogDrawer";
+import SkillCreatorChat from "./components/SkillCreatorChat";
 
 export default function App() {
   const isConfigComplete = (c: any): c is import("./store").Config =>
@@ -30,6 +31,7 @@ export default function App() {
   const setPanelRatio = useStore(s => s.setPanelRatio);
   const uiLanguage = useStore(s => s.uiLanguage);
   const setUiLanguage = useStore(s => s.setUiLanguage);
+  const skillCreatorChatOpen = useStore(s => s.skillCreatorChatOpen);
 
   const [showSettings, setShowSettings] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
@@ -245,6 +247,9 @@ export default function App() {
       {/* BrainInspect overlay */}
       {showBrainInspect && <BrainInspect onClose={() => setShowBrainInspect(false)} />}
 
+      {/* Skill Creator Chat floating window */}
+      {skillCreatorChatOpen && <SkillCreatorChat />}
+
       {/* Settings modal */}
       {showSettings && (
         <div style={modalOverlayStyle} onClick={() => setShowSettings(false)}>
@@ -317,8 +322,13 @@ function SettingsForm({ config, onSave }: { config: import("./store").Config; on
   const [vault, setVault] = useState(config.vault_path);
   const [project, setProject] = useState(config.project_path);
   const [skills, setSkills] = useState(config.skills_path);
+  const [selectedBackend, setSelectedBackend] = useState<"minimax" | "anthropic" | "glm">(config.selected_backend ?? "minimax");
   const [minimaxToken, setMinimaxToken] = useState(config.minimax_token ?? "");
   const [showMinimaxToken, setShowMinimaxToken] = useState(false);
+  const [anthropicToken, setAnthropicToken] = useState(config.anthropic_token ?? "");
+  const [showAnthropicToken, setShowAnthropicToken] = useState(false);
+  const [glmToken, setGlmToken] = useState(config.glm_token ?? "");
+  const [showGlmToken, setShowGlmToken] = useState(false);
   const [accountToken, setAccountToken] = useState(config.account_token ?? "");
   const [showAccountToken, setShowAccountToken] = useState(false);
   const [accountStatus, setAccountStatus] = useState<{ email: string; username?: string } | null>(null);
@@ -336,7 +346,10 @@ function SettingsForm({ config, onSave }: { config: import("./store").Config; on
     setVault(config.vault_path);
     setProject(config.project_path);
     setSkills(config.skills_path);
+    setSelectedBackend(config.selected_backend ?? "minimax");
     setMinimaxToken(config.minimax_token ?? "");
+    setAnthropicToken(config.anthropic_token ?? "");
+    setGlmToken(config.glm_token ?? "");
     setAccountToken(config.account_token ?? "");
   }, [config]);
 
@@ -363,13 +376,31 @@ function SettingsForm({ config, onSave }: { config: import("./store").Config; on
     };
   }, []);
 
+  // Inline validation — selected backend must have an API key before saving
+  const backendKeyMissing =
+    (selectedBackend === 'minimax' && !minimaxToken.trim()) ||
+    (selectedBackend === 'anthropic' && !anthropicToken.trim()) ||
+    (selectedBackend === 'glm' && !glmToken.trim());
+
+  const backendKeyLabel =
+    selectedBackend === 'minimax' ? 'MiniMax API key (sk-api-...)' :
+    selectedBackend === 'anthropic' ? 'Anthropic API key (sk-ant-...)' :
+    'GLM API key';
+
+  // GLM uses MiniMax/kplr for the AI terminal; warn if neither is available
+  const glmTerminalWarning =
+    selectedBackend === 'glm' && glmToken.trim() && !minimaxToken.trim();
+
   const save = () => {
     const c: import("./store").Config = {
       vault_path: vault,
       project_path: project,
       skills_path: skills,
       panel_ratio: config.panel_ratio,
+      selected_backend: selectedBackend,
       minimax_token: minimaxToken || undefined,
+      anthropic_token: anthropicToken || undefined,
+      glm_token: glmToken || undefined,
       account_token: accountToken || undefined,
       registry_url: config.registry_url,
       admin_url: config.admin_url,
@@ -440,25 +471,106 @@ function SettingsForm({ config, onSave }: { config: import("./store").Config; on
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+
+      {/* ── AI Model Backend ── */}
+      <label style={{ color: "#888", fontSize: 11 }}>AI Model Backend</label>
+      <div style={{ display: "flex", gap: 6 }}>
+        {(["minimax", "anthropic", "glm"] as const).map(b => {
+          const labels: Record<string, string> = { minimax: "MiniMax", anthropic: "Claude (Anthropic)", glm: "GLM (智谱)" };
+          const active = selectedBackend === b;
+          return (
+            <button
+              key={b}
+              onClick={() => setSelectedBackend(b)}
+              style={{
+                flex: 1, padding: "5px 6px", fontSize: 11, borderRadius: 4, cursor: "pointer",
+                border: active ? "1px solid #007acc" : "1px solid #444",
+                background: active ? "#1e3a4f" : "#1e1e1e",
+                color: active ? "#007acc" : "#888",
+                fontWeight: active ? 600 : 400,
+              }}
+            >
+              {labels[b]}
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Inline error: selected backend has no API key */}
+      {backendKeyMissing && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11 }}>
+          <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#e05555', display: 'inline-block', flexShrink: 0 }} />
+          <span style={{ color: '#e05555' }}>
+            No {backendKeyLabel} found — enter a key below or select a provider that already has a key configured.
+          </span>
+        </div>
+      )}
+
+      {/* Per-backend API key field */}
+      {selectedBackend === "minimax" && <>
+        <label style={{ color: "#888", fontSize: 11 }}>MiniMax API Key (sk-api-...)</label>
+        <div style={{ position: "relative" }}>
+          <input
+            type={showMinimaxToken ? "text" : "password"}
+            value={minimaxToken}
+            onChange={e => setMinimaxToken(e.target.value)}
+            placeholder="Enter MiniMax API key"
+            style={{ ...inputStyle, paddingRight: 60 }}
+          />
+          <button onClick={() => setShowMinimaxToken(v => !v)} style={{ position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", color: "#666", cursor: "pointer", fontSize: 11 }}>
+            {showMinimaxToken ? "Hide" : "Show"}
+          </button>
+        </div>
+      </>}
+
+      {selectedBackend === "anthropic" && <>
+        <label style={{ color: "#888", fontSize: 11 }}>Anthropic API Key (sk-ant-...)</label>
+        <div style={{ position: "relative" }}>
+          <input
+            type={showAnthropicToken ? "text" : "password"}
+            value={anthropicToken}
+            onChange={e => setAnthropicToken(e.target.value)}
+            placeholder="Enter Anthropic API key"
+            style={{ ...inputStyle, paddingRight: 60 }}
+          />
+          <button onClick={() => setShowAnthropicToken(v => !v)} style={{ position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", color: "#666", cursor: "pointer", fontSize: 11 }}>
+            {showAnthropicToken ? "Hide" : "Show"}
+          </button>
+        </div>
+      </>}
+
+      {selectedBackend === "glm" && <>
+        <label style={{ color: "#888", fontSize: 11 }}>GLM API Key (智谱AI)</label>
+        <div style={{ position: "relative" }}>
+          <input
+            type={showGlmToken ? "text" : "password"}
+            value={glmToken}
+            onChange={e => setGlmToken(e.target.value)}
+            placeholder="Enter GLM API key"
+            style={{ ...inputStyle, paddingRight: 60 }}
+          />
+          <button onClick={() => setShowGlmToken(v => !v)} style={{ position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", color: "#666", cursor: "pointer", fontSize: 11 }}>
+            {showGlmToken ? "Hide" : "Show"}
+          </button>
+        </div>
+        {glmTerminalWarning ? (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11 }}>
+            <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#c8a45a', display: 'inline-block', flexShrink: 0 }} />
+            <span style={{ color: '#c8a45a' }}>
+              GLM powers analysis only — the AI terminal requires a MiniMax key. Add one above to enable the terminal.
+            </span>
+          </div>
+        ) : (
+          <span style={{ fontSize: 10, color: '#555' }}>GLM powers analysis features. For the AI terminal, also configure a MiniMax key.</span>
+        )}
+      </>}
+
       <label style={{ color: "#888", fontSize: 11 }}>Private Decision Dependancy</label>
       <input value={vault} onChange={e => setVault(e.target.value)} style={inputStyle} />
       <label style={{ color: "#888", fontSize: 11 }}>Project Path</label>
       <input value={project} onChange={e => setProject(e.target.value)} style={inputStyle} />
       <label style={{ color: "#888", fontSize: 11 }}>Skills Path</label>
       <input value={skills} onChange={e => setSkills(e.target.value)} style={inputStyle} />
-      <label style={{ color: "#888", fontSize: 11 }}>MiniMax API Key (sk-api-...)</label>
-      <div style={{ position: "relative" }}>
-        <input
-          type={showMinimaxToken ? "text" : "password"}
-          value={minimaxToken}
-          onChange={e => setMinimaxToken(e.target.value)}
-          placeholder="Enter Minimax API key"
-          style={{ ...inputStyle, paddingRight: 60 }}
-        />
-        <button onClick={() => setShowMinimaxToken(v => !v)} style={{ position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", color: "#666", cursor: "pointer", fontSize: 11 }}>
-          {showMinimaxToken ? "Hide" : "Show"}
-        </button>
-      </div>
 
       {/* ── Account section ── */}
       <div style={{ borderTop: "1px solid #444", paddingTop: 12, marginTop: 4 }}>
@@ -538,7 +650,14 @@ function SettingsForm({ config, onSave }: { config: import("./store").Config; on
         </div>
       </div>
 
-      <button onClick={save} style={{ ...btnStyle(true), alignSelf: "flex-end", marginTop: 8 }}>{t(uiLanguage, "save")}</button>
+      <button
+        onClick={save}
+        disabled={backendKeyMissing}
+        title={backendKeyMissing ? `Add a ${backendKeyLabel} to save` : undefined}
+        style={{ ...btnStyle(!backendKeyMissing), alignSelf: "flex-end", marginTop: 8, opacity: backendKeyMissing ? 0.45 : 1, cursor: backendKeyMissing ? "not-allowed" : "pointer" }}
+      >
+        {t(uiLanguage, "save")}
+      </button>
     </div>
   );
 }

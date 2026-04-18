@@ -402,6 +402,14 @@ export default function KBPanel({ onFullscreenBrain, onBrainInspect }: { onFulls
               <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
                 {pendingGhostFile && (
                   <button
+                    onClick={() => useStore.getState().setSkillCreatorChatOpen(true, pendingGhostFile.name)}
+                    style={{ background: "#0d1f1a", border: "1px solid #4ec9b055", borderRadius: 4, color: "#4ec9b0", cursor: "pointer", fontSize: 10, padding: "2px 8px" }}
+                  >
+                    ✦ create with agent
+                  </button>
+                )}
+                {pendingGhostFile && (
+                  <button
                     onClick={handleAiSuggest}
                     disabled={aiSuggestLoading}
                     style={{ background: aiSuggestLoading ? "#1a1a2a" : "#1a1800", border: "1px solid #c8a45a55", borderRadius: 4, color: "#c8a45a", cursor: aiSuggestLoading ? "default" : "pointer", fontSize: 10, padding: "2px 8px" }}
