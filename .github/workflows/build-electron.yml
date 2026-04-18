@@ -64,7 +64,9 @@ jobs:
       - name: Prebuild (compile server + build frontend)
         run: bash scripts/prebuild.sh
 
-      # electron-builder reads APPLE_* secrets for code signing on macOS
+      # electron-builder reads APPLE_* secrets for code signing on macOS.
+      # CSC_IDENTITY_AUTO_DISCOVERY=false prevents electron-builder from picking up
+      # any certificate in the system keychain (CI runners may have one) and failing.
       # 注意：每个 runner 只编译自己的 arch，避免跨平台编译 node-pty 失败
       - name: Build Electron installer
         shell: bash
@@ -76,7 +78,9 @@ jobs:
           esac
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # macOS code signing (optional — omit to build unsigned)
+          # Disable auto-discovery of signing certificates — build unsigned
+          CSC_IDENTITY_AUTO_DISCOVERY: false
+          # macOS code signing (optional — uncomment to enable notarization)
           # APPLE_ID: ${{ secrets.APPLE_ID }}
           # APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           # APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
