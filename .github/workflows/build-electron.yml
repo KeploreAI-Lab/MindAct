@@ -53,6 +53,12 @@ jobs:
         if: matrix.os == 'ubuntu-latest'
         run: sudo apt-get update && sudo apt-get install -y rpm
 
+      # node-gyp (used to rebuild node-pty for Electron) requires Python's distutils.
+      # Python 3.12+ removed distutils; setuptools restores it on all platforms.
+      - name: Install Python setuptools (node-gyp needs distutils)
+        shell: bash
+        run: pip3 install setuptools || pip install setuptools || true
+
       - name: Prebuild (compile server + build frontend)
         run: bash scripts/prebuild.sh
 
@@ -96,6 +102,10 @@ jobs:
         if: matrix.platform == 'mac' && matrix.arch == 'arm64' && (github.event_name == 'push' || inputs.upload_to_cloudflare)
         shell: bash
         run: |
+          if [ -z "$REGISTRY_TOKEN" ] || [ -z "$REGISTRY_URL" ]; then
+            echo "⚠️ REGISTRY_TOKEN or REGISTRY_URL not set — skipping upload. Set GitHub Secrets to enable."
+            exit 0
+          fi
           VERSION="${GITHUB_REF_NAME#v}"
           FILE=$(ls dist-electron/*.zip 2>/dev/null | head -1 || ls dist-electron/*.dmg 2>/dev/null | head -1)
           [ -z "$FILE" ] && echo "No release file found" && exit 1
@@ -115,6 +125,10 @@ jobs:
         if: matrix.platform == 'mac' && matrix.arch == 'x64' && (github.event_name == 'push' || inputs.upload_to_cloudflare)
         shell: bash
         run: |
+          if [ -z "$REGISTRY_TOKEN" ] || [ -z "$REGISTRY_URL" ]; then
+            echo "⚠️ REGISTRY_TOKEN or REGISTRY_URL not set — skipping upload."
+            exit 0
+          fi
           VERSION="${GITHUB_REF_NAME#v}"
           FILE=$(ls dist-electron/*.zip 2>/dev/null | head -1 || ls dist-electron/*.dmg 2>/dev/null | head -1)
           [ -z "$FILE" ] && echo "No release file found" && exit 1
@@ -132,6 +146,10 @@ jobs:
         if: matrix.platform == 'windows' && (github.event_name == 'push' || inputs.upload_to_cloudflare)
         shell: bash
         run: |
+          if [ -z "$REGISTRY_TOKEN" ] || [ -z "$REGISTRY_URL" ]; then
+            echo "⚠️ REGISTRY_TOKEN or REGISTRY_URL not set — skipping upload."
+            exit 0
+          fi
           VERSION="${GITHUB_REF_NAME#v}"
           FILE=$(ls dist-electron/*.exe 2>/dev/null | head -1)
           [ -z "$FILE" ] && echo "No exe found" && exit 1
@@ -149,6 +167,10 @@ jobs:
         if: matrix.platform == 'linux' && (github.event_name == 'push' || inputs.upload_to_cloudflare)
         shell: bash
         run: |
+          if [ -z "$REGISTRY_TOKEN" ] || [ -z "$REGISTRY_URL" ]; then
+            echo "⚠️ REGISTRY_TOKEN or REGISTRY_URL not set — skipping upload."
+            exit 0
+          fi
           VERSION="${GITHUB_REF_NAME#v}"
           FILE=$(ls dist-electron/*.AppImage 2>/dev/null | head -1)
           [ -z "$FILE" ] && echo "No AppImage found" && exit 1
@@ -169,7 +191,12 @@ jobs:
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     steps:
       - name: Promote release to latest (stable channel)
+        shell: bash
         run: |
+          if [ -z "$REGISTRY_TOKEN" ] || [ -z "$REGISTRY_URL" ]; then
+            echo "⚠️ REGISTRY_TOKEN or REGISTRY_URL not set — skipping promote."
+            exit 0
+          fi
           VERSION="${GITHUB_REF_NAME#v}"
           echo "Promoting v$VERSION to latest..."
           curl -sf -X POST \
