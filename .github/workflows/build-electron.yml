@@ -95,38 +95,160 @@ jobs:
             dist-electron/*.AppImage
           retention-days: 30
 
-      # ── 上传到 Cloudflare Release 系统（暂时禁用）──────────────────────────────
-      # - name: Upload to Cloudflare Release (macOS arm64)
-      #   if: matrix.platform == 'mac' && matrix.arch == 'arm64'
-      #   shell: bash
-      #   run: |
-      #     VERSION="${GITHUB_REF_NAME#v}"
-      #     FILE=$(find dist-electron -maxdepth 1 \( -name "*.zip" -o -name "*.dmg" \) | sort | head -1)
-      #     [ -z "$FILE" ] && echo "ERROR: No .zip or .dmg found" && exit 1
-      #     curl -s -o /tmp/upload.json -w "%{http_code}" -X POST \
-      #       -H "Authorization: Bearer $REGISTRY_TOKEN" \
-      #       -F "metadata={\"version\":\"$VERSION\",\"platform\":\"mac-arm64\",\"channel\":\"stable\"}" \
-      #       -F "file=@$FILE;filename=$(basename $FILE)" \
-      #       "$REGISTRY_URL/releases/upload"
-      #   env:
-      #     REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
-      #     REGISTRY_URL: ${{ secrets.REGISTRY_URL }}
+  # ── 所有平台构建完成后：创建 GitHub Release + 注册到 Cloudflare ───────────────────
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
 
-  # ── 所有平台构建完成后，promote 最新版本（暂时禁用）─────────────────────────────
-  # promote:
-  #   needs: build
-  #   runs-on: ubuntu-latest
-  #   if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
-  #   steps:
-  #     - name: Promote release to latest (stable channel)
-  #       shell: bash
-  #       run: |
-  #         VERSION="${GITHUB_REF_NAME#v}"
-  #         curl -s -X POST \
-  #           -H "Authorization: Bearer $REGISTRY_TOKEN" \
-  #           -H "Content-Type: application/json" \
-  #           -d "{\"version\":\"$VERSION\"}" \
-  #           "$REGISTRY_URL/releases/promote"
-  #       env:
-  #         REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
-  #         REGISTRY_URL: ${{ secrets.REGISTRY_URL }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # 1. 验证 Cloudflare registry token（提前失败，避免浪费时间）
+      - name: Validate registry token
+        shell: bash
+        run: |
+          HTTP=$(curl -s -o /tmp/auth_test.json -w "%{http_code}" \
+            -H "Authorization: Bearer $REGISTRY_TOKEN" \
+            "$REGISTRY_URL/releases/all")
+          echo "Token validation: HTTP $HTTP"
+          if [ "$HTTP" != "200" ]; then
+            echo "ERROR: Registry token is invalid or REGISTRY_URL is wrong (HTTP $HTTP)"
+            echo "Response: $(cat /tmp/auth_test.json)"
+            echo ""
+            echo "Fix: ensure GitHub Secret REGISTRY_TOKEN matches the value set via"
+            echo "  wrangler secret put REGISTRY_TOKEN  (in cloudflare/)"
+            exit 1
+          fi
+          echo "Token OK"
+        env:
+          REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
+          REGISTRY_URL: ${{ secrets.REGISTRY_URL }}
+
+      # 2. 下载三平台构建产物
+      - name: Download macOS artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: mindact-mac-arm64
+          path: artifacts/mac
+
+      - name: Download Windows artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: mindact-windows-x64
+          path: artifacts/windows
+
+      - name: Download Linux artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: mindact-linux-x64
+          path: artifacts/linux
+
+      - name: List downloaded artifacts
+        run: find artifacts -type f | sort
+
+      # 3. 创建 GitHub Release，上传所有安装包作为 Release assets（文件托管在 GitHub）
+      #    注意：先 create（不附文件），再逐个 upload——避免文件名含空格（如 Windows NSIS
+      #    "MindAct Setup 1.0.0.exe"）在 shell 变量展开时被 word-split 导致上传失败。
+      - name: Create GitHub Release
+        shell: bash
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          gh release create "$GITHUB_REF_NAME" \
+            --title "MindAct v$VERSION" \
+            --generate-notes
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload release assets
+        shell: bash
+        run: |
+          find artifacts -type f \( -name "*.dmg" -o -name "*.zip" -o -name "*.exe" -o -name "*.AppImage" \) | sort | while IFS= read -r f; do
+            echo "Uploading: $f"
+            gh release upload "$GITHUB_REF_NAME" "$f"
+          done
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # 4. 计算 SHA512 + 注册三平台到 Cloudflare（传 download_url，不上传文件）
+      #    - macOS: 用 *-mac.zip（electron-updater 增量更新用 zip，dmg 仅初次安装）
+      #    - Windows: 用 *.exe（NSIS installer，electron-updater 支持直接更新）
+      #    - Linux: 用 *.AppImage
+      - name: Register releases with Cloudflare registry
+        shell: bash
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          REPO_URL="https://github.com/$GITHUB_REPOSITORY"
+
+          register() {
+            local PLATFORM="$1"
+            local FILE="$2"
+            if [ -z "$FILE" ] || [ ! -f "$FILE" ]; then
+              echo "[$PLATFORM] WARNING: file not found, skipping"
+              return 0
+            fi
+            local FILENAME
+            FILENAME=$(basename "$FILE")
+            local SHA512
+            SHA512=$(openssl dgst -sha512 -binary "$FILE" | base64 | tr -d '\n')
+            local DL_URL="$REPO_URL/releases/download/$GITHUB_REF_NAME/$FILENAME"
+
+            echo "[$PLATFORM] Registering: $FILENAME"
+            echo "[$PLATFORM] URL: $DL_URL"
+            echo "[$PLATFORM] SHA512: ${SHA512:0:20}..."
+
+            local METADATA
+            METADATA=$(printf '{"version":"%s","platform":"%s","channel":"stable","sha512":"%s","download_url":"%s"}' \
+              "$VERSION" "$PLATFORM" "$SHA512" "$DL_URL")
+
+            HTTP=$(curl -s -o /tmp/up_${PLATFORM}.json -w "%{http_code}" -X POST \
+              -H "Authorization: Bearer $REGISTRY_TOKEN" \
+              -F "metadata=$METADATA" \
+              "$REGISTRY_URL/releases/upload")
+            echo "[$PLATFORM] HTTP $HTTP: $(cat /tmp/up_${PLATFORM}.json)"
+            if [ "$HTTP" != "200" ]; then
+              echo "[$PLATFORM] ERROR: upload failed"
+              exit 1
+            fi
+          }
+
+          # Platform names must match the YAML manifest endpoint mapping in the Cloudflare worker:
+          #   latest-mac.yml   → platform = "mac"
+          #   latest.yml       → platform = "windows"
+          #   latest-linux.yml → platform = "linux"
+
+          # macOS arm64: use the -mac.zip (not .dmg) for electron-updater auto-update
+          MAC_ZIP=$(find artifacts/mac -name "*-mac.zip" | head -1)
+          register "mac" "$MAC_ZIP"
+
+          # Windows x64: use .exe (NSIS installer)
+          WIN_EXE=$(find artifacts/windows -name "*.exe" | head -1)
+          register "windows" "$WIN_EXE"
+
+          # Linux x64: use .AppImage
+          LINUX_APPIMAGE=$(find artifacts/linux -name "*.AppImage" | head -1)
+          register "linux" "$LINUX_APPIMAGE"
+        env:
+          REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
+          REGISTRY_URL: ${{ secrets.REGISTRY_URL }}
+
+      # 5. Promote 到 latest（让 electron-updater 的 YAML manifest 指向本版本）
+      - name: Promote release to latest
+        shell: bash
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          HTTP=$(curl -s -o /tmp/promote.json -w "%{http_code}" -X POST \
+            -H "Authorization: Bearer $REGISTRY_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d "{\"version\":\"$VERSION\"}" \
+            "$REGISTRY_URL/releases/promote")
+          echo "Promote HTTP $HTTP: $(cat /tmp/promote.json)"
+          if [ "$HTTP" != "200" ]; then
+            echo "ERROR: promote failed"
+            exit 1
+          fi
+          echo "Release v$VERSION promoted to latest"
+        env:
+          REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
+          REGISTRY_URL: ${{ secrets.REGISTRY_URL }}
