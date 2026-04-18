@@ -57,8 +57,15 @@ jobs:
         run: bash scripts/prebuild.sh
 
       # electron-builder reads APPLE_* secrets for code signing on macOS
+      # 注意：每个 runner 只编译自己的 arch，避免跨平台编译 node-pty 失败
       - name: Build Electron installer
-        run: bun run dist:${{ matrix.platform }}
+        shell: bash
+        run: |
+          case "${{ matrix.platform }}" in
+            mac)     npx electron-builder --mac     --${{ matrix.arch }} ;;
+            windows) npx electron-builder --win     --${{ matrix.arch }} ;;
+            linux)   npx electron-builder --linux   --${{ matrix.arch }} ;;
+          esac
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # macOS code signing (optional — omit to build unsigned)
@@ -70,7 +77,8 @@ jobs:
           # WIN_CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
 
       - name: List build output
-        run: ls -lh dist-electron/ || dir dist-electron\
+        shell: bash
+        run: ls -lh dist-electron/ 2>/dev/null || echo "(no output files yet)"
 
       - name: Upload installer as GitHub artifact
         uses: actions/upload-artifact@v4
