@@ -5,11 +5,6 @@ on:
     tags:
       - 'v*'           # 打 v1.2.3 标签时自动触发
   workflow_dispatch:   # 手动触发（用于测试）
-    inputs:
-      upload_to_cloudflare:
-        description: 'Upload release to Cloudflare (requires REGISTRY_TOKEN secret)'
-        type: boolean
-        default: true
 
 jobs:
   build:
@@ -103,135 +98,38 @@ jobs:
             dist-electron/*.AppImage
           retention-days: 30
 
-      # ── 上传到 Cloudflare Release 系统 ──────────────────────────────────────
-      - name: Upload to Cloudflare Release (macOS arm64)
-        if: matrix.platform == 'mac' && matrix.arch == 'arm64' && (github.event_name == 'push' || inputs.upload_to_cloudflare)
-        shell: bash
-        run: |
-          if [ -z "$REGISTRY_TOKEN" ] || [ -z "$REGISTRY_URL" ]; then
-            echo "⚠️ REGISTRY_TOKEN or REGISTRY_URL not set — skipping upload. Set GitHub Secrets to enable."
-            exit 0
-          fi
-          VERSION="${GITHUB_REF_NAME#v}"
-          echo "=== dist-electron contents ==="; ls -lh dist-electron/ 2>/dev/null; echo "=============================="
-          FILE=$(find dist-electron -maxdepth 1 \( -name "*.zip" -o -name "*.dmg" \) | sort | head -1)
-          [ -z "$FILE" ] && echo "ERROR: No .zip or .dmg found in dist-electron/" && exit 1
-          FILENAME=$(basename "$FILE")
-          echo "Uploading $FILENAME as v$VERSION / mac-arm64..."
-          TMPFILE=$(mktemp)
-          HTTP_CODE=$(curl -s -o "$TMPFILE" -w "%{http_code}" -X POST \
-            -H "Authorization: Bearer $REGISTRY_TOKEN" \
-            -F "metadata={\"version\":\"$VERSION\",\"platform\":\"mac-arm64\",\"channel\":\"stable\",\"release_notes\":\"Release $VERSION\"}" \
-            -F "file=@$FILE;filename=$FILENAME" \
-            "$REGISTRY_URL/releases/upload")
-          echo "Upload response (HTTP $HTTP_CODE):"; cat "$TMPFILE"; rm -f "$TMPFILE"
-          [ "$HTTP_CODE" -ge 200 ] && [ "$HTTP_CODE" -lt 300 ] || exit 1
-        env:
-          REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
-          REGISTRY_URL: ${{ secrets.REGISTRY_URL }}
+      # ── 上传到 Cloudflare Release 系统（暂时禁用）──────────────────────────────
+      # - name: Upload to Cloudflare Release (macOS arm64)
+      #   if: matrix.platform == 'mac' && matrix.arch == 'arm64'
+      #   shell: bash
+      #   run: |
+      #     VERSION="${GITHUB_REF_NAME#v}"
+      #     FILE=$(find dist-electron -maxdepth 1 \( -name "*.zip" -o -name "*.dmg" \) | sort | head -1)
+      #     [ -z "$FILE" ] && echo "ERROR: No .zip or .dmg found" && exit 1
+      #     curl -s -o /tmp/upload.json -w "%{http_code}" -X POST \
+      #       -H "Authorization: Bearer $REGISTRY_TOKEN" \
+      #       -F "metadata={\"version\":\"$VERSION\",\"platform\":\"mac-arm64\",\"channel\":\"stable\"}" \
+      #       -F "file=@$FILE;filename=$(basename $FILE)" \
+      #       "$REGISTRY_URL/releases/upload"
+      #   env:
+      #     REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
+      #     REGISTRY_URL: ${{ secrets.REGISTRY_URL }}
 
-      - name: Upload to Cloudflare Release (macOS x64)
-        if: matrix.platform == 'mac' && matrix.arch == 'x64' && (github.event_name == 'push' || inputs.upload_to_cloudflare)
-        shell: bash
-        run: |
-          if [ -z "$REGISTRY_TOKEN" ] || [ -z "$REGISTRY_URL" ]; then
-            echo "⚠️ REGISTRY_TOKEN or REGISTRY_URL not set — skipping upload."
-            exit 0
-          fi
-          VERSION="${GITHUB_REF_NAME#v}"
-          echo "=== dist-electron contents ==="; ls -lh dist-electron/ 2>/dev/null; echo "=============================="
-          FILE=$(find dist-electron -maxdepth 1 \( -name "*.zip" -o -name "*.dmg" \) | sort | head -1)
-          [ -z "$FILE" ] && echo "ERROR: No .zip or .dmg found in dist-electron/" && exit 1
-          FILENAME=$(basename "$FILE")
-          echo "Uploading $FILENAME as v$VERSION / mac-x64..."
-          TMPFILE=$(mktemp)
-          HTTP_CODE=$(curl -s -o "$TMPFILE" -w "%{http_code}" -X POST \
-            -H "Authorization: Bearer $REGISTRY_TOKEN" \
-            -F "metadata={\"version\":\"$VERSION\",\"platform\":\"mac-x64\",\"channel\":\"stable\",\"release_notes\":\"Release $VERSION\"}" \
-            -F "file=@$FILE;filename=$FILENAME" \
-            "$REGISTRY_URL/releases/upload")
-          echo "Upload response (HTTP $HTTP_CODE):"; cat "$TMPFILE"; rm -f "$TMPFILE"
-          [ "$HTTP_CODE" -ge 200 ] && [ "$HTTP_CODE" -lt 300 ] || exit 1
-        env:
-          REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
-          REGISTRY_URL: ${{ secrets.REGISTRY_URL }}
-
-      - name: Upload to Cloudflare Release (Windows)
-        if: matrix.platform == 'windows' && (github.event_name == 'push' || inputs.upload_to_cloudflare)
-        shell: bash
-        run: |
-          if [ -z "$REGISTRY_TOKEN" ] || [ -z "$REGISTRY_URL" ]; then
-            echo "⚠️ REGISTRY_TOKEN or REGISTRY_URL not set — skipping upload."
-            exit 0
-          fi
-          VERSION="${GITHUB_REF_NAME#v}"
-          echo "=== dist-electron contents ==="; ls -lh dist-electron/ 2>/dev/null; echo "=============================="
-          FILE=$(find dist-electron -maxdepth 1 -name "*.exe" | sort | head -1)
-          [ -z "$FILE" ] && echo "ERROR: No .exe found in dist-electron/" && exit 1
-          FILENAME=$(basename "$FILE")
-          echo "Uploading $FILENAME as v$VERSION / windows..."
-          TMPFILE=$(mktemp)
-          HTTP_CODE=$(curl -s -o "$TMPFILE" -w "%{http_code}" -X POST \
-            -H "Authorization: Bearer $REGISTRY_TOKEN" \
-            -F "metadata={\"version\":\"$VERSION\",\"platform\":\"windows\",\"channel\":\"stable\",\"release_notes\":\"Release $VERSION\"}" \
-            -F "file=@$FILE;filename=$FILENAME" \
-            "$REGISTRY_URL/releases/upload")
-          echo "Upload response (HTTP $HTTP_CODE):"; cat "$TMPFILE"; rm -f "$TMPFILE"
-          [ "$HTTP_CODE" -ge 200 ] && [ "$HTTP_CODE" -lt 300 ] || exit 1
-        env:
-          REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
-          REGISTRY_URL: ${{ secrets.REGISTRY_URL }}
-
-      - name: Upload to Cloudflare Release (Linux)
-        if: matrix.platform == 'linux' && (github.event_name == 'push' || inputs.upload_to_cloudflare)
-        shell: bash
-        run: |
-          if [ -z "$REGISTRY_TOKEN" ] || [ -z "$REGISTRY_URL" ]; then
-            echo "⚠️ REGISTRY_TOKEN or REGISTRY_URL not set — skipping upload."
-            exit 0
-          fi
-          VERSION="${GITHUB_REF_NAME#v}"
-          echo "=== dist-electron contents ==="; ls -lh dist-electron/ 2>/dev/null; echo "=============================="
-          FILE=$(find dist-electron -maxdepth 1 -name "*.AppImage" | sort | head -1)
-          [ -z "$FILE" ] && echo "ERROR: No .AppImage found in dist-electron/" && exit 1
-          FILENAME=$(basename "$FILE")
-          echo "Uploading $FILENAME as v$VERSION / linux..."
-          TMPFILE=$(mktemp)
-          HTTP_CODE=$(curl -s -o "$TMPFILE" -w "%{http_code}" -X POST \
-            -H "Authorization: Bearer $REGISTRY_TOKEN" \
-            -F "metadata={\"version\":\"$VERSION\",\"platform\":\"linux\",\"channel\":\"stable\",\"release_notes\":\"Release $VERSION\"}" \
-            -F "file=@$FILE;filename=$FILENAME" \
-            "$REGISTRY_URL/releases/upload")
-          echo "Upload response (HTTP $HTTP_CODE):"; cat "$TMPFILE"; rm -f "$TMPFILE"
-          [ "$HTTP_CODE" -ge 200 ] && [ "$HTTP_CODE" -lt 300 ] || exit 1
-        env:
-          REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
-          REGISTRY_URL: ${{ secrets.REGISTRY_URL }}
-
-  # ── 所有平台构建完成后，promote 最新版本 ───────────────────────────────────────
-  promote:
-    needs: build
-    runs-on: ubuntu-latest
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
-    steps:
-      - name: Promote release to latest (stable channel)
-        shell: bash
-        run: |
-          if [ -z "$REGISTRY_TOKEN" ] || [ -z "$REGISTRY_URL" ]; then
-            echo "⚠️ REGISTRY_TOKEN or REGISTRY_URL not set — skipping promote."
-            exit 0
-          fi
-          VERSION="${GITHUB_REF_NAME#v}"
-          echo "Promoting v$VERSION to latest..."
-          TMPFILE=$(mktemp)
-          HTTP_CODE=$(curl -s -o "$TMPFILE" -w "%{http_code}" -X POST \
-            -H "Authorization: Bearer $REGISTRY_TOKEN" \
-            -H "Content-Type: application/json" \
-            -d "{\"version\":\"$VERSION\"}" \
-            "$REGISTRY_URL/releases/promote")
-          echo "Promote response (HTTP $HTTP_CODE):"; cat "$TMPFILE"; rm -f "$TMPFILE"
-          [ "$HTTP_CODE" -ge 200 ] && [ "$HTTP_CODE" -lt 300 ] || exit 1
-          echo "v$VERSION is now the latest stable release."
-        env:
-          REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
-          REGISTRY_URL: ${{ secrets.REGISTRY_URL }}
+  # ── 所有平台构建完成后，promote 最新版本（暂时禁用）─────────────────────────────
+  # promote:
+  #   needs: build
+  #   runs-on: ubuntu-latest
+  #   if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+  #   steps:
+  #     - name: Promote release to latest (stable channel)
+  #       shell: bash
+  #       run: |
+  #         VERSION="${GITHUB_REF_NAME#v}"
+  #         curl -s -X POST \
+  #           -H "Authorization: Bearer $REGISTRY_TOKEN" \
+  #           -H "Content-Type: application/json" \
+  #           -d "{\"version\":\"$VERSION\"}" \
+  #           "$REGISTRY_URL/releases/promote"
+  #       env:
+  #         REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
+  #         REGISTRY_URL: ${{ secrets.REGISTRY_URL }}
