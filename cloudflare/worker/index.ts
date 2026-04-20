@@ -820,11 +820,15 @@ async function route(request: Request, url: URL, env: Env): Promise<Response> {
     if (userResult instanceof Response) return userResult;
 
     const row = await env.DB.prepare(
-      "SELECT encrypted, updated_at FROM user_api_keys WHERE user_id = ?"
-    ).bind(userResult.id).first<{ encrypted: string; updated_at: string }>();
+      "SELECT encrypted, updated_at, provider_list FROM user_api_keys WHERE user_id = ?"
+    ).bind(userResult.id).first<{ encrypted: string; updated_at: string; provider_list: string | null }>();
 
-    if (!row) return jsonResponse({ encrypted: null, updated_at: null }, 200);
-    return jsonResponse({ encrypted: row.encrypted, updated_at: row.updated_at });
+    if (!row) return jsonResponse({ encrypted: null, updated_at: null, provider_list: [] }, 200);
+    return jsonResponse({
+      encrypted: row.encrypted,
+      updated_at: row.updated_at,
+      provider_list: row.provider_list ? JSON.parse(row.provider_list) : [],
+    });
   }
 
   // ── PUT /user/api-keys ────────────────────────────────────────────────────
@@ -832,17 +836,29 @@ async function route(request: Request, url: URL, env: Env): Promise<Response> {
     const userResult = await requireUser(request, env);
     if (userResult instanceof Response) return userResult;
 
-    const body = await request.json() as { encrypted?: string };
+    const body = await request.json() as { encrypted?: string; provider_list?: unknown };
     if (!body.encrypted || typeof body.encrypted !== "string") {
       return jsonResponse({ error: "encrypted field is required" }, 400);
     }
 
+    // Sanitise provider_list: only accept an array of short strings, max 10 entries
+    const providerListJson = Array.isArray(body.provider_list)
+      ? JSON.stringify(
+          (body.provider_list as unknown[])
+            .filter((s): s is string => typeof s === "string" && s.length <= 50)
+            .slice(0, 10)
+        )
+      : null;
+
     const now = new Date().toISOString();
     await env.DB.prepare(`
-      INSERT INTO user_api_keys (user_id, encrypted, updated_at)
-      VALUES (?, ?, ?)
-      ON CONFLICT(user_id) DO UPDATE SET encrypted = excluded.encrypted, updated_at = excluded.updated_at
-    `).bind(userResult.id, body.encrypted, now).run();
+      INSERT INTO user_api_keys (user_id, encrypted, updated_at, provider_list)
+      VALUES (?, ?, ?, ?)
+      ON CONFLICT(user_id) DO UPDATE SET
+        encrypted = excluded.encrypted,
+        updated_at = excluded.updated_at,
+        provider_list = excluded.provider_list
+    `).bind(userResult.id, body.encrypted, now, providerListJson).run();
 
     return jsonResponse({ ok: true, updated_at: now });
   }
@@ -1308,10 +1324,10 @@ async function route(request: Request, url: URL, env: Env): Promise<Response> {
       env.DB.prepare(
         "SELECT COUNT(*) as cnt FROM registry_installs WHERE user_id = ?"
       ).bind(userId).first<{ cnt: number }>(),
-      // Only return sync status; encrypted blob is NOT returned to admin
+      // Only return sync status + provider names; encrypted blob is NOT returned to admin
       env.DB.prepare(
-        "SELECT updated_at FROM user_api_keys WHERE user_id = ?"
-      ).bind(userId).first<{ updated_at: string }>().catch(() => null),
+        "SELECT updated_at, provider_list FROM user_api_keys WHERE user_id = ?"
+      ).bind(userId).first<{ updated_at: string; provider_list: string | null }>().catch(() => null),
     ]);
 
     return jsonResponse({
@@ -1321,6 +1337,7 @@ async function route(request: Request, url: URL, env: Env): Promise<Response> {
       installs_count: installs?.cnt ?? 0,
       api_keys_synced: !!apiKeyRow,
       api_keys_updated_at: apiKeyRow?.updated_at ?? null,
+      api_keys_provider_list: apiKeyRow?.provider_list ? JSON.parse(apiKeyRow.provider_list) : [],
     });
   }
 

@@ -261,6 +261,7 @@ function RetrieveTab({ registryUrl, redirectUrl }: { registryUrl: string; redire
     if (!otp.trim()) { setError("Code is required"); return; }
     setLoading(true);
     setError("");
+    setInfo("");
     try {
       const res = await fetch(`${registryUrl.replace(/\/$/, "")}/auth/verify-otp`, {
         method: "POST",
@@ -359,7 +360,7 @@ function RetrieveTab({ registryUrl, redirectUrl }: { registryUrl: string; redire
               type="text"
               value={otp}
               onChange={e => setOtp(e.target.value.replace(/\D/g, "").slice(0, 6))}
-              onKeyDown={e => e.key === "Enter" && handleVerify()}
+              onKeyDown={e => e.key === "Enter" && !loading && otp.length === 6 && handleVerify()}
               placeholder="123456"
               maxLength={6}
               style={{ ...s.input, letterSpacing: "0.3em", fontSize: 16, textAlign: "center" }}

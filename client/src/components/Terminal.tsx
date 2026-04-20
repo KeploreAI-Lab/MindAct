@@ -418,7 +418,28 @@ function Terminal() {
     const hasFiles = files.length > 0;
     const hasImage = files.some(f => f.type.startsWith("image/"));
 
-    if (!hasFiles) return; // plain text — let browser handle it normally
+    if (!hasFiles) {
+      // Windows screenshots (Win+Shift+S) don't appear in clipboardData.files —
+      // the image is only in the native clipboard as bitmap. Try Electron API.
+      const electronAPI = (window as any).electronAPI;
+      const imgBase64: string | null = electronAPI?.getClipboardImage?.() ?? null;
+      if (imgBase64) {
+        e.preventDefault();
+        try {
+          const res = await fetch("/api/upload-image", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ data: imgBase64, ext: "png" }),
+          });
+          const data = await res.json();
+          if (data.path) {
+            setInputValue(v => v + (v && !v.endsWith(" ") ? " " : "") + data.path + " ");
+            setTimeout(() => textareaRef.current?.focus(), 0);
+          }
+        } catch {}
+      }
+      return; // plain text or unhandled — let browser handle normally
+    }
 
     e.preventDefault();
     const paths: string[] = [];
@@ -628,7 +649,21 @@ function Terminal() {
         wsRef.current.send(JSON.stringify({ type: "resize", cols: term.cols, rows: Math.max(5, term.rows) }));
       }
     } else {
-      connect();
+      // WS is closed — reconnect with exponential backoff (1s, 2s, 4s)
+      let attempt = 0;
+      const tryReconnect = () => {
+        if (wsRef.current?.readyState === WebSocket.OPEN) return; // already connected
+        attempt++;
+        connect();
+        if (attempt < 3) {
+          reconnectTimerRef.current = setTimeout(tryReconnect, 1000 * Math.pow(2, attempt - 1));
+        } else {
+          // After 3 attempts, show diagnostic message
+          const t2 = termRef.current;
+          if (t2) t2.writeln("\r\n\x1b[31m[MindAct] Could not reconnect. Check that the server is running.\x1b[0m");
+        }
+      };
+      tryReconnect();
     }
   }, [connect, hideSplash]);
 
@@ -661,6 +696,14 @@ function Terminal() {
 
     termRef.current = term;
     fitAddonRef.current = fitAddon;
+
+    // Copy-on-select: whenever the user finishes a selection, copy the selected text.
+    term.onSelectionChange(() => {
+      const sel = term.getSelection();
+      if (sel) {
+        try { navigator.clipboard.writeText(sel).catch(() => {}); } catch {}
+      }
+    });
 
     // Inject CSS to hide xterm's cursor canvas layer entirely.
     // cursorWidth/cursorColor options are unreliable for bar-style cursors —

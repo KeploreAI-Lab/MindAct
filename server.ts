@@ -38,8 +38,14 @@ interface Config {
   account_token?: string;
   /** Optional: Admin UI URL override (for auth redirect flow). */
   admin_url?: string;
-  /** Which AI backend to use: minimax | anthropic | glm */
-  selected_backend?: "minimax" | "anthropic" | "glm";
+  /** Which AI backend to use: minimax | anthropic | glm | nvidia | custom */
+  selected_backend?: "minimax" | "anthropic" | "glm" | "nvidia" | "custom";
+  /** Custom OpenAI-compatible provider base URL */
+  custom_provider_url?: string;
+  /** Custom provider default model name */
+  custom_provider_model?: string;
+  /** Custom provider fast model name (optional) */
+  custom_provider_model_fast?: string;
 }
 
 function slugifySkillName(name: string): string {
@@ -346,6 +352,54 @@ function readGlmCredentials(): string | null {
     const lines = readFileSync(credFile, "utf-8").split("\n");
     for (const line of lines) {
       const m = line.match(/^GLM_KEY="?([^"]+)"?/);
+      if (m) return m[1].trim();
+    }
+  } catch {}
+  return null;
+}
+
+function saveNvidiaCredentials(key: string) {
+  const credDir = physmindConfigDir();
+  const credFile = join(credDir, "credentials");
+  if (!existsSync(credDir)) mkdirSync(credDir, { recursive: true });
+  let existing = "";
+  try { existing = existsSync(credFile) ? readFileSync(credFile, "utf-8") : ""; } catch {}
+  const lines = existing.split("\n").filter(l => !l.startsWith("NVIDIA_KEY=") && l.trim() !== "");
+  lines.push(`NVIDIA_KEY="${key}"`);
+  writeFileSync(credFile, lines.join("\n") + "\n");
+}
+
+function readNvidiaCredentials(): string | null {
+  const credFile = join(physmindConfigDir(), "credentials");
+  if (!existsSync(credFile)) return null;
+  try {
+    const lines = readFileSync(credFile, "utf-8").split("\n");
+    for (const line of lines) {
+      const m = line.match(/^NVIDIA_KEY="?([^"]+)"?/);
+      if (m) return m[1].trim();
+    }
+  } catch {}
+  return null;
+}
+
+function saveCustomCredentials(key: string) {
+  const credDir = physmindConfigDir();
+  const credFile = join(credDir, "credentials");
+  if (!existsSync(credDir)) mkdirSync(credDir, { recursive: true });
+  let existing = "";
+  try { existing = existsSync(credFile) ? readFileSync(credFile, "utf-8") : ""; } catch {}
+  const lines = existing.split("\n").filter(l => !l.startsWith("CUSTOM_KEY=") && l.trim() !== "");
+  lines.push(`CUSTOM_KEY="${key}"`);
+  writeFileSync(credFile, lines.join("\n") + "\n");
+}
+
+function readCustomCredentials(): string | null {
+  const credFile = join(physmindConfigDir(), "credentials");
+  if (!existsSync(credFile)) return null;
+  try {
+    const lines = readFileSync(credFile, "utf-8").split("\n");
+    for (const line of lines) {
+      const m = line.match(/^CUSTOM_KEY="?([^"]+)"?/);
       if (m) return m[1].trim();
     }
   } catch {}
@@ -694,7 +748,7 @@ const ptySessions = new Map<import("bun").ServerWebSocket<unknown>, PtySession>(
 
 const PTY_WORKER = join(RESOURCE_DIR, "pty-worker.cjs");
 
-function spawnPty(ws: import("bun").ServerWebSocket<unknown>, projectPath: string) {
+async function spawnPty(ws: import("bun").ServerWebSocket<unknown>, projectPath: string) {
   const existing = ptySessions.get(ws);
   if (existing) {
     // Mark session as superseded BEFORE killing — the stdout stream loop
@@ -703,6 +757,11 @@ function spawnPty(ws: import("bun").ServerWebSocket<unknown>, projectPath: strin
     // while the new worker is already running.
     ptySessions.delete(ws);
     try { existing.worker.kill(); } catch {}
+    // On Windows, give the process tree a moment to fully terminate before
+    // spawning a new worker — otherwise node-pty may fail to acquire the pty.
+    if (process.platform === "win32") {
+      await Bun.sleep(250);
+    }
   }
 
   const cwd = (projectPath && existsSync(projectPath)) ? projectPath : homedir();
@@ -936,10 +995,12 @@ h2{color:#4ec9b0;margin:0;}p{color:#666;font-size:13px;margin:0;}</style></head>
         const kplr_token = readKplrCredentials();
         const minimax_token = readMinimaxCredentials();
         const glm_token = readGlmCredentials();
-        return jsonResponse(config ? { ...config, kplr_token, minimax_token, glm_token } : null);
+        const nvidia_token = readNvidiaCredentials();
+        const custom_provider_key = readCustomCredentials();
+        return jsonResponse(config ? { ...config, kplr_token, minimax_token, glm_token, nvidia_token, custom_provider_key } : null);
       }
       if (req.method === "POST") {
-        return req.json().then((body: Config & { kplr_token?: string; minimax_token?: string; glm_token?: string }) => {
+        return req.json().then((body: Config & { kplr_token?: string; minimax_token?: string; glm_token?: string; nvidia_token?: string; custom_provider_key?: string }) => {
           // Save keys first, independently of path config validation
           if (body.kplr_token?.startsWith("kplr-")) {
             saveKplrCredentials(body.kplr_token);
@@ -949,6 +1010,12 @@ h2{color:#4ec9b0;margin:0;}p{color:#666;font-size:13px;margin:0;}</style></head>
           }
           if (body.glm_token) {
             saveGlmCredentials(body.glm_token);
+          }
+          if (body.nvidia_token) {
+            saveNvidiaCredentials(body.nvidia_token);
+          }
+          if (body.custom_provider_key) {
+            saveCustomCredentials(body.custom_provider_key);
           }
           const normalized = normalizeConfig(body);
           if (normalized) writeConfig(normalized);
@@ -1183,6 +1250,66 @@ h2{color:#4ec9b0;margin:0;}p{color:#666;font-size:13px;margin:0;}</style></head>
       const buf = Buffer.from(body.data, "base64");
       writeFileSync(filePath, buf);
       return jsonResponse({ path: filePath });
+    }
+
+    // ── POST /api/feedback — send user feedback to Slack via Webhook ──────────
+    if (url.pathname === "/api/feedback" && req.method === "POST") {
+      try {
+        const body = await req.json() as {
+          type: "bug" | "feature" | "general";
+          message: string;
+          email?: string;
+          userAgent?: string;
+          version?: string;
+        };
+
+        const webhookUrl = process.env.SLACK_WEBHOOK_URL;
+        if (!webhookUrl) {
+          // No webhook configured — still acknowledge gracefully
+          console.log("[feedback] No SLACK_WEBHOOK_URL set. Feedback:", JSON.stringify(body));
+          return jsonResponse({ ok: true, note: "logged" });
+        }
+
+        const typeEmoji = body.type === "bug" ? "🐛" : body.type === "feature" ? "✨" : "💬";
+        const typeLabel = body.type === "bug" ? "Bug Report" : body.type === "feature" ? "Feature Request" : "General";
+
+        const pkg = (() => { try { return JSON.parse(readFileSync(new URL("./package.json", import.meta.url).pathname, "utf-8")); } catch { return {}; } })();
+        const appVersion = pkg.version ?? "unknown";
+
+        const slackPayload = {
+          blocks: [
+            {
+              type: "header",
+              text: { type: "plain_text", text: `${typeEmoji} MindAct Feedback — ${typeLabel}`, emoji: true },
+            },
+            {
+              type: "section",
+              fields: [
+                { type: "mrkdwn", text: `*From:*\n${body.email || "_anonymous_"}` },
+                { type: "mrkdwn", text: `*App Version:*\nv${appVersion}` },
+                { type: "mrkdwn", text: `*Platform:*\n${process.platform}` },
+                { type: "mrkdwn", text: `*Type:*\n${typeLabel}` },
+              ],
+            },
+            {
+              type: "section",
+              text: { type: "mrkdwn", text: `*Message:*\n${body.message}` },
+            },
+          ],
+        };
+
+        const slackRes = await fetch(webhookUrl, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(slackPayload),
+        });
+
+        if (!slackRes.ok) throw new Error(`Slack returned ${slackRes.status}`);
+        return jsonResponse({ ok: true });
+      } catch (e: any) {
+        console.error("[feedback] error:", e.message);
+        return jsonResponse({ ok: false, error: e.message }, 500);
+      }
     }
 
     // Platform marketplace — search available modules

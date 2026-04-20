@@ -13,6 +13,11 @@ export interface ApiKeys {
   minimax_token?: string;
   anthropic_token?: string;
   glm_token?: string;
+  nvidia_token?: string;
+  custom_key?: string;
+  custom_provider_url?: string;
+  custom_provider_model?: string;
+  custom_provider_model_fast?: string;
 }
 
 interface EncryptedPayload {

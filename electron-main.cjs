@@ -152,13 +152,21 @@ async function waitForServer(maxRetries = 30, intervalMs = 500) {
 let splashWindow = null;
 
 function showSplash() {
+  let appVersion = 'unknown';
+  try {
+    const pkgPath = IS_PACKAGED
+      ? path.join(process.resourcesPath, 'package.json')
+      : path.join(__dirname, 'package.json');
+    appVersion = JSON.parse(fs.readFileSync(pkgPath, 'utf-8')).version ?? 'unknown';
+  } catch {}
+
   splashWindow = new BrowserWindow({
-    width: 420,
-    height: 260,
+    width: 540,
+    height: 320,
     frame: false,
     resizable: false,
     center: true,
-    transparent: false,
+    transparent: true,
     alwaysOnTop: true,
     skipTaskbar: true,
     webPreferences: { nodeIntegration: false, contextIsolation: true },
@@ -170,57 +178,85 @@ function showSplash() {
 <meta charset="utf-8">
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width: 540px; height: 320px; overflow: hidden; }
   body {
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-    background: #ffffff;
-    border: 1px solid #e2e8f0;
-    border-radius: 8px;
-    overflow: hidden;
-    height: 260px;
+    background: #0c1222;
+    border: 1px solid #1e3a5f;
+    border-radius: 12px;
     display: flex;
     flex-direction: column;
     align-items: center;
     justify-content: center;
-    gap: 20px;
+    gap: 0;
     -webkit-app-region: drag;
+    animation: fadeIn 0.25s ease-in;
+    position: relative;
+    overflow: hidden;
   }
-  .top-bar {
+  @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+
+  /* Subtle background glow */
+  .glow {
     position: absolute;
-    top: 0; left: 0; right: 0;
-    height: 4px;
-    background: linear-gradient(90deg, #3B82F6, #60A5FA);
-    border-radius: 8px 8px 0 0;
+    top: -80px; left: 50%; transform: translateX(-50%);
+    width: 360px; height: 240px;
+    background: radial-gradient(ellipse at center, rgba(59,130,246,0.18) 0%, transparent 70%);
+    pointer-events: none;
   }
-  .logo-row { display: flex; align-items: center; gap: 10px; }
-  .dot {
-    width: 36px; height: 36px;
-    border-radius: 8px;
-    background: #3B82F6;
+
+  /* Icon */
+  .icon-wrap {
+    width: 64px; height: 64px; border-radius: 16px;
+    background: linear-gradient(135deg, #1e40af, #3b82f6);
     display: flex; align-items: center; justify-content: center;
+    margin-bottom: 18px;
+    box-shadow: 0 0 32px rgba(59,130,246,0.35);
   }
-  .dot svg { width: 22px; height: 22px; fill: white; }
-  h1 { font-size: 22px; font-weight: 700; color: #0f172a; letter-spacing: -0.3px; }
-  .status { font-size: 13px; color: #64748b; }
-  .spinner {
-    width: 28px; height: 28px;
-    border: 2.5px solid #e2e8f0;
-    border-top-color: #3B82F6;
-    border-radius: 50%;
-    animation: spin 0.8s linear infinite;
+  .icon-wrap svg { width: 36px; height: 36px; fill: none; stroke: #fff; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+
+  /* Title */
+  .title { font-size: 30px; font-weight: 800; color: #f1f5f9; letter-spacing: -1px; margin-bottom: 6px; }
+  .subtitle { font-size: 12px; color: #475569; letter-spacing: 0.5px; margin-bottom: 32px; }
+
+  /* Progress bar */
+  .progress-track {
+    width: 240px; height: 2px; background: #1e293b; border-radius: 2px; overflow: hidden;
+    position: relative;
   }
-  @keyframes spin { to { transform: rotate(360deg); } }
+  .progress-fill {
+    height: 100%; width: 0;
+    background: linear-gradient(90deg, #3b82f6, #60a5fa);
+    border-radius: 2px;
+    animation: progress 4s cubic-bezier(0.4,0,0.2,1) forwards;
+  }
+  @keyframes progress { 0%{width:0} 60%{width:70%} 85%{width:88%} 100%{width:96%} }
+
+  .status { font-size: 11px; color: #334155; margin-top: 10px; }
+
+  /* Bottom copyright */
+  .copyright {
+    position: absolute; bottom: 14px; right: 20px;
+    font-size: 10px; color: #1e293b; letter-spacing: 0.3px;
+  }
 </style>
 </head>
 <body>
-  <div class="top-bar"></div>
-  <div class="logo-row">
-    <div class="dot">
-      <svg viewBox="0 0 24 24"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
-    </div>
-    <h1>MindAct</h1>
+  <div class="glow"></div>
+  <div class="icon-wrap">
+    <svg viewBox="0 0 24 24">
+      <path d="M12 2L2 7l10 5 10-5-10-5z"/>
+      <path d="M2 17l10 5 10-5"/>
+      <path d="M2 12l10 5 10-5"/>
+    </svg>
   </div>
-  <div class="spinner"></div>
+  <div class="title">MindAct</div>
+  <div class="subtitle">AI Decision Intelligence &nbsp;·&nbsp; v${appVersion}</div>
+  <div class="progress-track">
+    <div class="progress-fill"></div>
+  </div>
   <div class="status">Starting server\u2026</div>
+  <div class="copyright">&copy; 2024 KeploreAI</div>
 </body>
 </html>`;
 
@@ -373,6 +409,105 @@ app.on('ready', async () => {
     setTimeout(() => closeSplash(), 4000);
   } else {
     closeSplash();
+  }
+
+  // ── 应用菜单（Windows / Linux 显示菜单栏；macOS 自动出现在系统菜单栏）─────────
+  {
+    const { Menu, shell } = require('electron');
+    let appVersion = 'unknown';
+    try {
+      const pkgPath = IS_PACKAGED
+        ? path.join(process.resourcesPath, 'package.json')
+        : path.join(__dirname, 'package.json');
+      appVersion = JSON.parse(fs.readFileSync(pkgPath, 'utf-8')).version ?? 'unknown';
+    } catch {}
+
+    const send = (event, data) => {
+      const w = BrowserWindow.getAllWindows().find(win => win !== splashWindow);
+      if (w) w.webContents.send('menu-event', event, data);
+    };
+
+    const menuTemplate = [
+      {
+        label: 'File',
+        submenu: [
+          {
+            label: 'Open Project…',
+            accelerator: 'CmdOrCtrl+O',
+            click: async () => {
+              const win = BrowserWindow.getFocusedWindow() || mainWin;
+              const result = await dialog.showOpenDialog(win, { properties: ['openDirectory'], title: 'Open Project' });
+              if (!result.canceled && result.filePaths[0]) send('menu-open-project', result.filePaths[0]);
+            },
+          },
+          {
+            label: 'Import Skill…',
+            click: async () => {
+              const win = BrowserWindow.getFocusedWindow() || mainWin;
+              const result = await dialog.showOpenDialog(win, {
+                title: 'Import Skill',
+                filters: [{ name: 'Skill', extensions: ['skill', 'zip', 'yaml', 'yml', 'md'] }],
+                properties: ['openFile'],
+              });
+              if (!result.canceled && result.filePaths[0]) send('menu-import-skill', result.filePaths[0]);
+            },
+          },
+          {
+            label: 'Import Decision Dependency…',
+            click: async () => {
+              const win = BrowserWindow.getFocusedWindow() || mainWin;
+              const result = await dialog.showOpenDialog(win, {
+                title: 'Import Decision Dependency',
+                filters: [{ name: 'Decision Dependency', extensions: ['yaml', 'yml', 'md'] }],
+                properties: ['openFile'],
+              });
+              if (!result.canceled && result.filePaths[0]) send('menu-import-dd', result.filePaths[0]);
+            },
+          },
+          { type: 'separator' },
+          {
+            label: 'Settings',
+            accelerator: 'CmdOrCtrl+,',
+            click: () => send('menu-open-settings'),
+          },
+          {
+            label: 'History',
+            accelerator: 'CmdOrCtrl+H',
+            click: () => send('menu-toggle-history'),
+          },
+          { type: 'separator' },
+          { label: 'Quit', accelerator: process.platform === 'darwin' ? 'Cmd+Q' : 'Alt+F4', role: 'quit' },
+        ],
+      },
+      {
+        label: 'Edit',
+        submenu: [
+          { role: 'undo' },
+          { role: 'redo' },
+          { type: 'separator' },
+          { role: 'cut' },
+          { role: 'copy' },
+          { role: 'paste' },
+          { role: 'pasteAndMatchStyle' },
+          { role: 'delete' },
+          { role: 'selectAll' },
+        ],
+      },
+      {
+        label: 'Help',
+        submenu: [
+          { label: `Version ${appVersion}`, enabled: false },
+          { type: 'separator' },
+          { label: 'Contact Us', click: () => send('menu-contact-us') },
+          {
+            label: 'Report an Issue',
+            click: () => shell.openExternal('https://github.com/KeploreAI-Lab/MindAct/issues'),
+          },
+        ],
+      },
+    ];
+
+    Menu.setApplicationMenu(Menu.buildFromTemplate(menuTemplate));
   }
 
   setupAutoUpdater();
