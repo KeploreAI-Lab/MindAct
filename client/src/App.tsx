@@ -10,6 +10,7 @@ import BrainInspect from "./components/BrainInspect";
 import { t } from "./i18n";
 import GraphLogDrawer from "./components/GraphLogDrawer";
 import SkillCreatorChat from "./components/SkillCreatorChat";
+import { encryptApiKeys, decryptApiKeys } from "./lib/apiKeyCrypto";
 
 export default function App() {
   const isConfigComplete = (c: any): c is import("./store").Config =>
@@ -439,6 +440,79 @@ function SettingsForm({ config, onSave }: { config: import("./store").Config; on
   const glmTerminalWarning =
     selectedBackend === 'glm' && glmToken.trim() && !minimaxToken.trim();
 
+  // ── API key sync state ──────────────────────────────────────────────────────
+  const [syncStatus, setSyncStatus] = useState<null | "syncing" | "restoring" | "ok" | "error">(null);
+  const [syncMsg, setSyncMsg] = useState("");
+  const [syncedAt, setSyncedAt] = useState<string | null>(null);
+  const [cloudDeps, setCloudDeps] = useState<Array<{ id: string; name: string; type: string; version?: string }>>([]);
+  const [cloudDepsLoading, setCloudDepsLoading] = useState(false);
+
+  // Load cloud sync metadata whenever the user becomes signed in
+  React.useEffect(() => {
+    if (!accountStatus) { setSyncedAt(null); setCloudDeps([]); return; }
+    // Fetch last sync time
+    fetch("/api/user/api-keys")
+      .then(r => r.ok ? r.json() : null)
+      .then((d: any) => { if (d?.updated_at) setSyncedAt(d.updated_at); })
+      .catch(() => {});
+    // Fetch user's cloud dependencies
+    setCloudDepsLoading(true);
+    fetch("/api/registry/list")
+      .then(r => r.ok ? r.json() : null)
+      .then((d: any) => {
+        const items: Array<{ id: string; name: string; type: string; version?: string }> = (d?.items ?? [])
+          .filter((it: any) => it.visibility === "private" || it.visibility === "org")
+          .map((it: any) => ({ id: it.id, name: it.name, type: it.type, version: it.version }));
+        setCloudDeps(items);
+      })
+      .catch(() => {})
+      .finally(() => setCloudDepsLoading(false));
+  }, [accountStatus]);
+
+  const syncToCloud = async () => {
+    if (!accountToken) return;
+    setSyncStatus("syncing");
+    setSyncMsg("");
+    try {
+      const keys = { minimax_token: minimaxToken || undefined, anthropic_token: anthropicToken || undefined, glm_token: glmToken || undefined };
+      const encrypted = await encryptApiKeys(keys, accountToken);
+      const res = await fetch("/api/user/api-keys", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ encrypted }),
+      });
+      if (!res.ok) throw new Error("Upload failed");
+      const data = await res.json() as any;
+      setSyncedAt(data.updated_at ?? new Date().toISOString());
+      setSyncStatus("ok");
+    } catch (e: any) {
+      setSyncStatus("error");
+      setSyncMsg(e.message ?? "Unknown error");
+    }
+  };
+
+  const restoreFromCloud = async () => {
+    if (!accountToken) return;
+    setSyncStatus("restoring");
+    setSyncMsg("");
+    try {
+      const res = await fetch("/api/user/api-keys");
+      if (!res.ok) throw new Error("Fetch failed");
+      const data = await res.json() as any;
+      if (!data?.encrypted) throw new Error("No backup found");
+      const keys = await decryptApiKeys(data.encrypted, accountToken);
+      if (keys.minimax_token !== undefined) setMinimaxToken(keys.minimax_token ?? "");
+      if (keys.anthropic_token !== undefined) setAnthropicToken(keys.anthropic_token ?? "");
+      if (keys.glm_token !== undefined) setGlmToken(keys.glm_token ?? "");
+      if (data.updated_at) setSyncedAt(data.updated_at);
+      setSyncStatus("ok");
+      setSyncMsg("ok_restore");
+    } catch (e: any) {
+      setSyncStatus("error");
+      setSyncMsg(e.message ?? "Unknown error");
+    }
+  };
+
   const save = () => {
     const c: import("./store").Config = {
       vault_path: vault,
@@ -697,6 +771,117 @@ function SettingsForm({ config, onSave }: { config: import("./store").Config; on
           )}
         </div>
       </div>
+
+      {/* ── Account & Sync panel (only when signed in) ── */}
+      {accountStatus && (
+        <div style={{ borderTop: "1px solid #333", paddingTop: 14, marginTop: 4, display: "flex", flexDirection: "column", gap: 10 }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: "#888", textTransform: "uppercase", letterSpacing: 0.5 }}>
+            {t(uiLanguage, "account_sync_title")}
+          </div>
+
+          {/* Security notice */}
+          <div style={{ display: "flex", gap: 8, background: "#0d1a10", border: "1px solid #1a3a1a", borderRadius: 6, padding: "9px 11px", alignItems: "flex-start" }}>
+            <span style={{ fontSize: 13, flexShrink: 0, lineHeight: 1 }}>🔒</span>
+            <span style={{ fontSize: 10, color: "#4ec9b0", lineHeight: 1.5 }}>
+              {t(uiLanguage, "sync_security_notice")}
+            </span>
+          </div>
+
+          {/* API Keys sync row */}
+          <div>
+            <div style={{ fontSize: 10, color: "#666", marginBottom: 6 }}>
+              {t(uiLanguage, "api_keys_status")}
+              <span style={{ marginLeft: 8 }}>
+                {syncedAt ? (
+                  <>
+                    <span style={{ width: 5, height: 5, borderRadius: "50%", background: "#4ec9b0", display: "inline-block", marginRight: 4, verticalAlign: "middle" }} />
+                    <span style={{ color: "#4ec9b0" }}>{t(uiLanguage, "keys_synced_indicator")}</span>
+                    <span style={{ color: "#444", marginLeft: 6 }}>
+                      {t(uiLanguage, "last_synced", { date: new Date(syncedAt).toLocaleString() })}
+                    </span>
+                  </>
+                ) : (
+                  <>
+                    <span style={{ width: 5, height: 5, borderRadius: "50%", background: "#555", display: "inline-block", marginRight: 4, verticalAlign: "middle" }} />
+                    <span style={{ color: "#555" }}>{t(uiLanguage, "keys_not_synced")}</span>
+                  </>
+                )}
+              </span>
+            </div>
+            {/* Masked key preview */}
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 8 }}>
+              {[
+                { label: "MiniMax", val: minimaxToken },
+                { label: "Anthropic", val: anthropicToken },
+                { label: "GLM", val: glmToken },
+              ].filter(k => k.val).map(k => (
+                <span key={k.label} style={{ fontSize: 9, fontFamily: "monospace", background: "#1a1a1a", border: "1px solid #333", borderRadius: 3, padding: "2px 7px", color: "#666" }}>
+                  {k.label}: {k.val.slice(0, 7)}…{k.val.slice(-4)}
+                </span>
+              ))}
+            </div>
+            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+              <button
+                onClick={syncToCloud}
+                disabled={syncStatus === "syncing" || syncStatus === "restoring"}
+                style={{
+                  background: "#1a2a1a", border: "1px solid #2a4a2a", borderRadius: 4,
+                  color: syncStatus === "syncing" ? "#555" : "#4ec9b0",
+                  cursor: syncStatus === "syncing" ? "default" : "pointer",
+                  fontSize: 10, padding: "5px 12px", fontWeight: 600,
+                }}
+              >
+                {syncStatus === "syncing" ? t(uiLanguage, "syncing") : t(uiLanguage, "sync_api_keys")}
+              </button>
+              <button
+                onClick={restoreFromCloud}
+                disabled={syncStatus === "syncing" || syncStatus === "restoring"}
+                style={{
+                  background: "#1a1a2a", border: "1px solid #2a2a4a", borderRadius: 4,
+                  color: syncStatus === "restoring" ? "#555" : "#7dd3fc",
+                  cursor: syncStatus === "restoring" ? "default" : "pointer",
+                  fontSize: 10, padding: "5px 12px", fontWeight: 600,
+                }}
+              >
+                {syncStatus === "restoring" ? t(uiLanguage, "syncing") : t(uiLanguage, "restore_api_keys")}
+              </button>
+              {syncStatus === "ok" && (
+                <span style={{ fontSize: 10, color: "#4ec9b0" }}>
+                  ✓ {syncMsg === "ok_restore" ? t(uiLanguage, "restore_api_keys") : t(uiLanguage, "sync_success")}
+                </span>
+              )}
+              {syncStatus === "error" && (
+                <span style={{ fontSize: 10, color: "#e05555" }}>✗ {t(uiLanguage, "sync_error")}{syncMsg ? `: ${syncMsg}` : ""}</span>
+              )}
+            </div>
+          </div>
+
+          {/* Cloud dependencies */}
+          <div>
+            <div style={{ fontSize: 10, color: "#666", marginBottom: 6 }}>
+              {t(uiLanguage, "cloud_dependencies")}
+              {!cloudDepsLoading && cloudDeps.length > 0 && (
+                <span style={{ marginLeft: 6, color: "#444" }}>({cloudDeps.length})</span>
+              )}
+            </div>
+            {cloudDepsLoading ? (
+              <div style={{ fontSize: 10, color: "#444" }}>…</div>
+            ) : cloudDeps.length === 0 ? (
+              <div style={{ fontSize: 10, color: "#444" }}>{t(uiLanguage, "no_cloud_deps")}</div>
+            ) : (
+              <div style={{ display: "flex", flexDirection: "column", gap: 4, maxHeight: 120, overflowY: "auto" }}>
+                {cloudDeps.map(dep => (
+                  <div key={dep.id} style={{ display: "flex", alignItems: "center", gap: 8, background: "#111", borderRadius: 4, padding: "4px 8px" }}>
+                    <span style={{ flex: 1, fontSize: 10, color: "#ccc", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{dep.name}</span>
+                    <span style={{ fontSize: 9, padding: "1px 5px", borderRadius: 2, border: "1px solid #33333388", color: "#777" }}>{dep.type}</span>
+                    {dep.version && <span style={{ fontSize: 9, color: "#444" }}>v{dep.version}</span>}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       <button
         onClick={save}

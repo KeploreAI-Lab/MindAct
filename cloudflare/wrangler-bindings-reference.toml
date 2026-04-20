@@ -1,0 +1,44 @@
+# MindAct Cloudflare Bindings Reference
+#
+# Copy the sections you need into your own wrangler.toml.
+# These are the shared Cloudflare resources for the MindAct infrastructure.
+#
+# Full reference: ../INFRASTRUCTURE.md
+
+# ── Account ───────────────────────────────────────────────────────────────────
+
+account_id = "4fcc9a0a6035a6257c36d247e3075ea8"
+
+# ── D1 Database ───────────────────────────────────────────────────────────────
+# SQL registry database. Schema: cloudflare/d1/schema.sql
+
+[[d1_databases]]
+binding = "DB"
+database_name = "mindact-registry"
+database_id = "071cb553-5d39-487e-b76f-f0315ba69c88"
+
+# ── R2 Bucket ─────────────────────────────────────────────────────────────────
+# Object storage for skill package ZIP blobs.
+
+[[r2_buckets]]
+binding = "BUCKET"
+bucket_name = "mindact-packages"
+
+# ── KV Namespace ──────────────────────────────────────────────────────────────
+# Cache / OTP session store.
+
+[[kv_namespaces]]
+binding = "REGISTRY_KV"
+id = "e545d75e73b84b82acb86816a293620a"
+preview_id = "5d3aec113b334852ac78b5fef7c76c88"
+
+# ── Public vars ───────────────────────────────────────────────────────────────
+
+[vars]
+TURNSTILE_SITE_KEY = "0x4AAAAAAC-kUeaEOMc8yQpN"
+
+# ── Secrets (set via wrangler secret put, NOT stored here) ────────────────────
+#
+# wrangler secret put REGISTRY_TOKEN    # registry auth token
+# wrangler secret put RESEND_API_KEY    # email OTP (https://resend.com)
+# wrangler secret put TURNSTILE_SECRET  # Turnstile CAPTCHA secret

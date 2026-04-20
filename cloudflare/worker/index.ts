@@ -810,6 +810,44 @@ async function route(request: Request, url: URL, env: Env): Promise<Response> {
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
+  // USER API KEY SYNC ROUTES  (client-side zero-knowledge encryption)
+  // The server only stores an opaque AES-256-GCM ciphertext blob.
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  // ── GET /user/api-keys ────────────────────────────────────────────────────
+  if (pathname === "/user/api-keys" && method === "GET") {
+    const userResult = await requireUser(request, env);
+    if (userResult instanceof Response) return userResult;
+
+    const row = await env.DB.prepare(
+      "SELECT encrypted, updated_at FROM user_api_keys WHERE user_id = ?"
+    ).bind(userResult.id).first<{ encrypted: string; updated_at: string }>();
+
+    if (!row) return jsonResponse({ encrypted: null, updated_at: null }, 200);
+    return jsonResponse({ encrypted: row.encrypted, updated_at: row.updated_at });
+  }
+
+  // ── PUT /user/api-keys ────────────────────────────────────────────────────
+  if (pathname === "/user/api-keys" && method === "PUT") {
+    const userResult = await requireUser(request, env);
+    if (userResult instanceof Response) return userResult;
+
+    const body = await request.json() as { encrypted?: string };
+    if (!body.encrypted || typeof body.encrypted !== "string") {
+      return jsonResponse({ error: "encrypted field is required" }, 400);
+    }
+
+    const now = new Date().toISOString();
+    await env.DB.prepare(`
+      INSERT INTO user_api_keys (user_id, encrypted, updated_at)
+      VALUES (?, ?, ?)
+      ON CONFLICT(user_id) DO UPDATE SET encrypted = excluded.encrypted, updated_at = excluded.updated_at
+    `).bind(userResult.id, body.encrypted, now).run();
+
+    return jsonResponse({ ok: true, updated_at: now });
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
   // ORG ROUTES
   // ═══════════════════════════════════════════════════════════════════════════
 
@@ -1224,7 +1262,7 @@ async function route(request: Request, url: URL, env: Env): Promise<Response> {
     ).bind(userId).first();
     if (!user) return jsonResponse({ error: "User not found" }, 404);
 
-    const [packages, orgs, installs] = await Promise.all([
+    const [packages, orgs, installs, apiKeyRow] = await Promise.all([
       env.DB.prepare(`
         SELECT d.id, d.name, d.type, d.visibility, v.status as pkg_status, v.version, v.published_at
         FROM decision_dependencies d
@@ -1240,6 +1278,10 @@ async function route(request: Request, url: URL, env: Env): Promise<Response> {
       env.DB.prepare(
         "SELECT COUNT(*) as cnt FROM registry_installs WHERE user_id = ?"
       ).bind(userId).first<{ cnt: number }>(),
+      // Only return sync status; encrypted blob is NOT returned to admin
+      env.DB.prepare(
+        "SELECT updated_at FROM user_api_keys WHERE user_id = ?"
+      ).bind(userId).first<{ updated_at: string }>().catch(() => null),
     ]);
 
     return jsonResponse({
@@ -1247,6 +1289,8 @@ async function route(request: Request, url: URL, env: Env): Promise<Response> {
       packages: packages.results,
       orgs: orgs.results,
       installs_count: installs?.cnt ?? 0,
+      api_keys_synced: !!apiKeyRow,
+      api_keys_updated_at: apiKeyRow?.updated_at ?? null,
     });
   }
 
@@ -1530,10 +1574,10 @@ releaseDate: '${releaseDate}'
     const metaRaw = form.get("metadata");
     if (!metaRaw) return jsonResponse({ error: "Missing metadata field" }, 400);
 
-    let meta: { version: string; platform: string; channel?: string; release_notes?: string; download_url?: string; sha512?: string };
+    let meta: { version: string; platform: string; channel?: string; release_notes?: string; download_url?: string; sha512?: string; sha256?: string; size_bytes?: number };
     try { meta = JSON.parse(String(metaRaw)); } catch { return jsonResponse({ error: "Invalid metadata JSON" }, 400); }
 
-    const { version, platform, channel = "stable", release_notes = "", download_url, sha512: metaSha512 } = meta;
+    const { version, platform, channel = "stable", release_notes = "", download_url, sha512: metaSha512, sha256: metaSha256, size_bytes: metaSizeBytes } = meta;
     if (!version || !platform) return jsonResponse({ error: "version and platform required in metadata" }, 400);
 
     const file = form.get("file") as File | null;
@@ -1549,9 +1593,9 @@ releaseDate: '${releaseDate}'
 
     const now = new Date().toISOString();
     let r2Key = download_url ? "external" : "";
-    let sha256 = "";
-    let sha512 = metaSha512 ?? "";  // use caller-provided sha512 for external URL; overwritten below if file is uploaded
-    let sizeBytes: number | null = null;
+    let sha256 = metaSha256 ?? "";          // caller-provided for external URL; overwritten if file uploaded
+    let sha512 = metaSha512 ?? "";          // caller-provided for external URL; overwritten if file uploaded
+    let sizeBytes: number | null = metaSizeBytes ?? null;  // caller-provided for external URL; overwritten if file uploaded
     let fileName = download_url ? `${platform}-external` : file!.name;
 
     if (file) {
@@ -1747,10 +1791,13 @@ async function getUserOrgIds(userId: string, env: Env): Promise<string[]> {
 // ─── Turnstile & OTP Session ─────────────────────────────────────────────────
 
 async function verifyTurnstile(secret: string, token: string, ip: string | null): Promise<boolean> {
+  // Turnstile siteverify requires application/x-www-form-urlencoded, NOT JSON.
+  const params = new URLSearchParams({ secret, response: token });
+  if (ip) params.set("remoteip", ip);
   const res = await fetch("https://challenges.cloudflare.com/turnstile/v0/siteverify", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ secret, response: token, ...(ip ? { remoteip: ip } : {}) }),
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: params.toString(),
   }).catch(() => null);
   if (!res || !res.ok) return false;
   const data = await res.json() as { success: boolean };

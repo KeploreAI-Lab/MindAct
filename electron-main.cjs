@@ -115,6 +115,10 @@ function startServer() {
   const env = {
     ...process.env,
     NODE_BINARY: process.execPath,
+    // ELECTRON_AS_NODE=1 lets the server spawn pty-worker.cjs using
+    // ELECTRON_RUN_AS_NODE=1 <electron-binary>, so we don't need a
+    // separate Node.js installation on the user's machine.
+    ELECTRON_AS_NODE: '1',
     MINDACT_RESOURCES: process.resourcesPath,
   };
 
@@ -306,6 +310,22 @@ function setupAutoUpdater() {
   setInterval(() => {
     autoUpdater.checkForUpdates().catch(e => console.error('[updater] Check failed:', e.message));
   }, 4 * 60 * 60 * 1000);
+}
+
+// ── 单实例锁（防止 Windows 上重复打开窗口）────────────────────────────────────
+const gotTheLock = app.requestSingleInstanceLock();
+if (!gotTheLock) {
+  // 已有实例运行，直接退出
+  app.quit();
+} else {
+  app.on('second-instance', () => {
+    // 有人尝试启动第二个实例 → 聚焦已有窗口
+    const win = BrowserWindow.getAllWindows().find(w => w !== splashWindow);
+    if (win) {
+      if (win.isMinimized()) win.restore();
+      win.focus();
+    }
+  });
 }
 
 // ── 主流程 ────────────────────────────────────────────────────────────────────
