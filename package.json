@@ -1,6 +1,6 @@
 {
   "name": "mindact",
-  "version": "1.0.0",
+  "version": "1.0.2",
   "description": "MindAct — AI-powered knowledge and skill management desktop app",
   "author": "KeploreAI <hi@physical-mind.ai>",
   "type": "module",
@@ -14,7 +14,7 @@
     "calib:collect": "CALIB_SAMPLES=100 bun run scripts/calibration_collect.ts",
     "calib:fit": "bun run scripts/calibration_fit.ts",
     "dist": "npx electron-builder",
-    "dist:mac": "npx electron-builder --mac",
+    "dist:mac": "CSC_IDENTITY_AUTO_DISCOVERY=false npx electron-builder --mac",
     "dist:win": "npx electron-builder --win",
     "dist:linux": "npx electron-builder --linux"
   },
