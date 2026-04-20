@@ -288,7 +288,8 @@ function setupAutoUpdater() {
   }
 
   autoUpdater.autoDownload = true;
-  autoUpdater.autoInstallOnAppQuit = false;
+  // Install silently when the user next quits the app — no reinstall wizard shown.
+  autoUpdater.autoInstallOnAppQuit = true;
 
   autoUpdater.on('checking-for-update', () => console.log('[updater] Checking for updates...'));
   autoUpdater.on('update-available', (info) => console.log(`[updater] Update available: v${info.version}`));
@@ -346,7 +347,8 @@ app.on('ready', async () => {
   ipcMain.handle('install-update', () => {
     let autoUpdater;
     try { autoUpdater = require('electron-updater').autoUpdater; } catch { return; }
-    autoUpdater.quitAndInstall(false, true);
+    // isSilent=true → NSIS runs with /S (no wizard); isForceRunAfter=true → restart after install
+    autoUpdater.quitAndInstall(true, true);
   });
 
   // Splash 屏

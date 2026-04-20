@@ -6,6 +6,30 @@ function sendLine(obj) {
   process.stdout.write(JSON.stringify(obj) + '\n');
 }
 
+// Catch any synchronous crash (e.g. native addon crash) and report it to the
+// terminal instead of silently disappearing. Must be registered before any
+// require() that might throw.
+process.on('uncaughtException', (err) => {
+  try {
+    sendLine({
+      type: 'data',
+      data: '\r\n\x1b[31m[MindAct] Fatal error in terminal backend:\x1b[0m\r\n' +
+            '\x1b[90m' + (err && err.message ? err.message : String(err)) + '\x1b[0m\r\n\r\n',
+    });
+    sendLine({ type: 'exit' });
+  } catch {}
+  process.exit(1);
+});
+process.on('unhandledRejection', (reason) => {
+  try {
+    sendLine({
+      type: 'data',
+      data: '\r\n\x1b[31m[MindAct] Unhandled promise rejection:\x1b[0m\r\n' +
+            '\x1b[90m' + String(reason) + '\x1b[0m\r\n\r\n',
+    });
+  } catch {}
+});
+
 // In the packaged Electron app, electron-builder's asarUnpack places node-pty at:
 //   resources/app.asar.unpacked/node_modules/node-pty/
 // but __dirname here is resources/, so we must probe both layouts.
@@ -106,13 +130,38 @@ function resolveEntryCommand() {
   const override = process.env.PHYSMIND_BIN || process.env.CLAUDE_BIN;
   if (override && isExecutable(override)) return { command: override, args: [] };
 
-  // Prefer @keploreai/physmind npm package resolved directly — most reliable
+  // In packaged Electron app, MINDACT_RESOURCES points to the resources directory.
+  // Try well-known paths in order: asarUnpacked > asar > dev node_modules.
+  // Using explicit paths avoids require.resolve returning an asar-internal path that
+  // some Windows pty.spawn invocations cannot open.
+  const resourcesDir = process.env.MINDACT_RESOURCES || __dirname;
+  const physmindRelPath = path.join('node_modules', '@keploreai', 'physmind', 'dist', 'cli.js');
+  const candidatePaths = [
+    // 1. Unpacked from asar (added to asarUnpack in electron-builder.yml) — real filesystem
+    path.join(resourcesDir, 'app.asar.unpacked', physmindRelPath),
+    // 2. Inside asar — Electron-as-Node can read this, but try unpacked first
+    path.join(resourcesDir, 'app.asar', physmindRelPath),
+    // 3. Dev layout: resourcesDir is the repo root or build dir
+    path.join(resourcesDir, physmindRelPath),
+    // 4. Same directory as pty-worker (extraResources layout)
+    path.join(__dirname, physmindRelPath),
+  ];
+
+  for (const candidate of candidatePaths) {
+    try {
+      if (fs.existsSync(candidate)) {
+        return { command: process.execPath, args: [candidate] };
+      }
+    } catch {}
+  }
+
+  // Fallback: use require.resolve (works in dev, may return asar path in prod)
   try {
     const script = require.resolve('@keploreai/physmind/dist/cli.js');
     return { command: process.execPath, args: [script] };
   } catch {}
 
-  // Fallback: system physmind in PATH
+  // Last resort: system physmind in PATH
   if (isExecutable('physmind')) return { command: 'physmind', args: [] };
 
   return null;

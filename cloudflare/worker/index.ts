@@ -1071,6 +1071,36 @@ async function route(request: Request, url: URL, env: Env): Promise<Response> {
     return jsonResponse({ ok: true, approved });
   }
 
+  // ── POST /registry/admin/trust-all-published ──────────────────────────────
+  // Bulk-promote all published versions with trust='untrusted' to trust='reviewed'.
+  // Useful after initial registry seeding to trust all official skills at once.
+  if (pathname === "/registry/admin/trust-all-published" && method === "POST") {
+    const authResult = await requireAdmin(request, env, "admin");
+    if (authResult instanceof Response) return authResult;
+    const { trust = "reviewed" } = await request.json() as { trust?: "reviewed" | "org-approved" };
+    const now = new Date().toISOString();
+    const result = await env.DB.prepare(`
+      UPDATE dependency_versions
+      SET trust = ?, reviewed_by = ?, reviewed_at = ?
+      WHERE status = 'published' AND trust = 'untrusted'
+    `).bind(trust, authResult.actorId, now).run();
+    // Add governance events for each updated row
+    const updatedRows = await env.DB.prepare(`
+      SELECT dd_id, version FROM dependency_versions
+      WHERE status = 'published' AND trust = ? AND reviewed_at = ?
+    `).bind(trust, now).all();
+    for (const row of (updatedRows.results ?? [])) {
+      await env.DB.prepare(`
+        INSERT INTO governance_events (dd_id, version, event_type, actor, actor_role, note, occurred_at)
+        VALUES (?, ?, 'approved', ?, 'admin', 'bulk trust-all-published', ?)
+      `).bind(row.dd_id, row.version, authResult.actorId, now).run();
+    }
+    // Invalidate all list caches
+    const listKeys = await env.REGISTRY_KV.list({ prefix: "list:" });
+    await Promise.all(listKeys.keys.map(k => env.REGISTRY_KV.delete(k.name)));
+    return jsonResponse({ ok: true, updated: result.meta?.changes ?? 0 });
+  }
+
   // ── POST /registry/admin/set-status ───────────────────────────────────────
   if (pathname === "/registry/admin/set-status" && method === "POST") {
     const authResult = await requireAdmin(request, env, "admin");
@@ -1636,6 +1666,119 @@ releaseDate: '${releaseDate}'
     `).bind(assetId, version, platform, fileName, r2Key, sizeBytes, sha256 || null, sha512 || null, now, download_url ?? null).run();
 
     return jsonResponse({ success: true, asset_id: assetId, r2_key: r2Key || null, sha256: sha256 || null, sha512: sha512 || null, size_bytes: sizeBytes, download_url: download_url ?? null });
+  }
+
+  // ── POST /releases/upload-init — register metadata, get streaming upload slot ─
+  // Accepts JSON (no file). Client provides pre-computed sha256/sha512.
+  // Returns { upload_id } to be used with PUT /releases/upload-stream/{id}.
+  // This avoids the 100 MB multipart-body-buffering limit in Cloudflare Workers.
+  if (pathname === "/releases/upload-init" && method === "POST") {
+    const auth = await requireAdmin(request, env, "publisher");
+    if (auth instanceof Response) return auth;
+
+    let body: {
+      version: string; platform: string; channel?: string; release_notes?: string;
+      sha256: string; sha512: string; size_bytes: number; filename: string;
+      download_url?: string;
+    };
+    try { body = await request.json() as typeof body; } catch {
+      return jsonResponse({ error: "Invalid JSON body" }, 400);
+    }
+
+    const { version, platform, channel = "stable", release_notes = "", sha256, sha512, size_bytes, filename, download_url } = body;
+    if (!version || !platform) return jsonResponse({ error: "version and platform required" }, 400);
+    if (!download_url && (!sha256 || !sha512 || !size_bytes || !filename)) {
+      return jsonResponse({ error: "sha256, sha512, size_bytes, filename required for file upload" }, 400);
+    }
+
+    const uploadId = generateUUID();
+    const r2Key = download_url ? "external" : `releases/${version}/${platform}/${filename}`;
+    const now = new Date().toISOString();
+
+    // Persist the upload slot in KV with 2-hour TTL
+    await env.REGISTRY_KV.put(
+      `upload_slot:${uploadId}`,
+      JSON.stringify({ version, platform, channel, release_notes, sha256, sha512, size_bytes, filename, r2Key, actorId: auth.actorId, download_url: download_url ?? null }),
+      { expirationTtl: 7200 },
+    );
+
+    if (download_url) {
+      // External URL — no binary upload needed; finalize immediately
+      const assetId = generateUUID();
+      await env.DB.prepare(`
+        INSERT INTO releases (id, version, channel, release_notes, published_at, published_by, is_latest)
+        VALUES (?, ?, ?, ?, ?, ?, 0)
+        ON CONFLICT(version) DO UPDATE SET
+          release_notes = COALESCE(excluded.release_notes, release_notes),
+          channel = excluded.channel
+      `).bind(version, version, channel, release_notes, now, auth.actorId).run();
+      await env.DB.prepare(`
+        INSERT INTO release_assets (id, release_id, platform, filename, r2_key, size_bytes, sha256, sha512, created_at, download_url)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(release_id, platform) DO UPDATE SET
+          filename = excluded.filename, r2_key = excluded.r2_key,
+          size_bytes = excluded.size_bytes, sha256 = excluded.sha256, sha512 = excluded.sha512,
+          created_at = excluded.created_at, download_url = excluded.download_url
+      `).bind(assetId, version, platform, `${platform}-external`, "external", size_bytes ?? null, sha256 ?? null, sha512 ?? null, now, download_url).run();
+      return jsonResponse({ upload_id: uploadId, file_upload_needed: false, asset_id: assetId });
+    }
+
+    return jsonResponse({ upload_id: uploadId, file_upload_needed: true, r2_key: r2Key });
+  }
+
+  // ── PUT /releases/upload-stream/{upload_id} — stream raw binary to R2 ───────
+  // Body is the raw binary file (not multipart). Streams directly to R2 — no
+  // 100 MB buffering limit. Must be called after POST /releases/upload-init.
+  if (pathname.startsWith("/releases/upload-stream/") && method === "PUT") {
+    const uploadId = pathname.slice("/releases/upload-stream/".length);
+    if (!uploadId) return jsonResponse({ error: "Missing upload_id" }, 400);
+
+    const auth = await requireAdmin(request, env, "publisher");
+    if (auth instanceof Response) return auth;
+
+    const slotRaw = await env.REGISTRY_KV.get(`upload_slot:${uploadId}`);
+    if (!slotRaw) return jsonResponse({ error: "Upload slot not found or expired" }, 404);
+
+    let slot: {
+      version: string; platform: string; channel: string; release_notes: string;
+      sha256: string; sha512: string; size_bytes: number; filename: string;
+      r2Key: string; actorId: string; download_url: string | null;
+    };
+    try { slot = JSON.parse(slotRaw); } catch {
+      return jsonResponse({ error: "Corrupt upload slot" }, 500);
+    }
+
+    if (!request.body) return jsonResponse({ error: "Empty request body" }, 400);
+
+    // Stream directly to R2 — no arrayBuffer() call, no memory buffering
+    await env.BUCKET.put(slot.r2Key, request.body, {
+      httpMetadata: { contentType: "application/octet-stream" },
+      customMetadata: { version: slot.version, platform: slot.platform, sha256: slot.sha256, sha512: slot.sha512 },
+    });
+
+    // Finalize DB records
+    const now = new Date().toISOString();
+    const assetId = generateUUID();
+    await env.DB.prepare(`
+      INSERT INTO releases (id, version, channel, release_notes, published_at, published_by, is_latest)
+      VALUES (?, ?, ?, ?, ?, ?, 0)
+      ON CONFLICT(version) DO UPDATE SET
+        release_notes = COALESCE(excluded.release_notes, release_notes),
+        channel = excluded.channel
+    `).bind(slot.version, slot.version, slot.channel, slot.release_notes, now, slot.actorId).run();
+    await env.DB.prepare(`
+      INSERT INTO release_assets (id, release_id, platform, filename, r2_key, size_bytes, sha256, sha512, created_at, download_url)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(release_id, platform) DO UPDATE SET
+        filename = excluded.filename, r2_key = excluded.r2_key,
+        size_bytes = excluded.size_bytes, sha256 = excluded.sha256, sha512 = excluded.sha512,
+        created_at = excluded.created_at, download_url = excluded.download_url
+    `).bind(assetId, slot.version, slot.platform, slot.filename, slot.r2Key, slot.size_bytes, slot.sha256, slot.sha512, now, slot.download_url).run();
+
+    // Clean up upload slot
+    await env.REGISTRY_KV.delete(`upload_slot:${uploadId}`);
+
+    return jsonResponse({ success: true, asset_id: assetId, sha256: slot.sha256, size_bytes: slot.size_bytes });
   }
 
   // ── POST /releases/promote ─────────────────────────────────────────────────

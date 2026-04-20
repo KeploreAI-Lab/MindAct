@@ -2,8 +2,10 @@ import React, { useEffect, useRef, useState } from "react";
 import {
   listReleases, uploadReleaseWithProgress, promoteRelease,
   revokeRelease, restoreRelease, deleteRelease, deleteReleaseAsset,
-  Release, UploadProgress,
+  Release,
 } from "../api";
+
+type UploadProgress = { loaded: number; total: number; speedBps: number; phase?: string };
 import { Card, SectionTitle, Btn } from "../ui";
 
 const PLATFORMS = [
@@ -268,27 +270,36 @@ function UploadForm({ onDone }: { onDone: () => void }) {
       {/* Progress bar */}
       {loading && file && (
         <div style={{ marginBottom: 10 }}>
+          <div style={{ fontSize: 10, color: "#555", marginBottom: 4 }}>
+            {progress?.phase === "hashing"
+              ? "Computing SHA-256 / SHA-512… (large files may take a few seconds)"
+              : progress?.phase === "uploading"
+              ? "Streaming to R2…"
+              : "Preparing…"}
+          </div>
           <div style={{
             height: 4, background: "#1a1a2a", borderRadius: 2, overflow: "hidden", marginBottom: 5,
           }}>
             <div style={{
               height: "100%", borderRadius: 2,
-              background: pct != null ? "#4ec9b0" : "#4ec9b044",
-              width: pct != null ? `${pct}%` : "100%",
-              transition: pct != null ? "width 0.2s ease" : "none",
-              animation: pct == null ? "pulse 1.2s ease-in-out infinite" : "none",
+              background: progress?.phase === "hashing" ? "#c8a45a" : pct != null ? "#4ec9b0" : "#4ec9b044",
+              width: progress?.phase === "hashing" ? "100%" : pct != null ? `${pct}%` : "100%",
+              transition: pct != null && progress?.phase !== "hashing" ? "width 0.2s ease" : "none",
+              animation: (pct == null || progress?.phase === "hashing") ? "pulse 1.2s ease-in-out infinite" : "none",
             }} />
           </div>
-          <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, color: "#555" }}>
-            <span>
-              {pct != null
-                ? `${pct}%  ·  ${fmtBytes(progress!.loaded)} / ${fmtBytes(progress!.total)}`
-                : "Uploading…"}
-            </span>
-            {progress && progress.speedBps > 0 && (
-              <span style={{ color: "#4ec9b077" }}>{fmtSpeed(progress.speedBps)}</span>
-            )}
-          </div>
+          {progress?.phase === "uploading" && (
+            <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, color: "#555" }}>
+              <span>
+                {pct != null
+                  ? `${pct}%  ·  ${fmtBytes(progress.loaded)} / ${fmtBytes(progress.total)}`
+                  : "Uploading…"}
+              </span>
+              {progress.speedBps > 0 && (
+                <span style={{ color: "#4ec9b077" }}>{fmtSpeed(progress.speedBps)}</span>
+              )}
+            </div>
+          )}
         </div>
       )}
       {loading && !file && (
@@ -307,7 +318,13 @@ function UploadForm({ onDone }: { onDone: () => void }) {
       )}
 
       <Btn onClick={handleUpload} disabled={loading || (!file && !downloadUrl.trim())}>
-        {loading ? (pct != null ? `Uploading… ${pct}%` : "Uploading…") : "Upload Asset"}
+        {loading
+          ? progress?.phase === "hashing"
+            ? "Hashing…"
+            : pct != null
+            ? `Uploading… ${pct}%`
+            : "Uploading…"
+          : "Upload Asset"}
       </Btn>
     </Card>
   );
