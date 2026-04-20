@@ -16,27 +16,37 @@ export interface ApiKeys {
 }
 
 interface EncryptedPayload {
-  salt: string;     // 32-byte hex
-  iv: string;       // 12-byte hex
+  salt: string;       // 32-byte hex
+  iv: string;         // 12-byte hex
   ciphertext: string; // hex-encoded AES-GCM output
 }
 
-function toHex(buf: ArrayBuffer): string {
-  return Array.from(new Uint8Array(buf))
+function toHex(bytes: Uint8Array<ArrayBuffer>): string {
+  return Array.from(bytes)
     .map(b => b.toString(16).padStart(2, "0"))
     .join("");
 }
 
-function fromHex(hex: string): Uint8Array {
+// Explicit ArrayBuffer constructor ensures TypeScript infers Uint8Array<ArrayBuffer>,
+// not Uint8Array<ArrayBufferLike>, so it satisfies the BufferSource constraint.
+function fromHex(hex: string): Uint8Array<ArrayBuffer> {
   if (hex.length % 2 !== 0) throw new Error("Invalid hex string");
-  const out = new Uint8Array(hex.length / 2);
+  const buf = new ArrayBuffer(hex.length / 2);
+  const out = new Uint8Array(buf);
   for (let i = 0; i < hex.length; i += 2) {
     out[i / 2] = parseInt(hex.slice(i, i + 2), 16);
   }
   return out;
 }
 
-async function deriveKey(accountToken: string, salt: Uint8Array): Promise<CryptoKey> {
+function randomBytes(n: number): Uint8Array<ArrayBuffer> {
+  const buf = new ArrayBuffer(n);
+  const arr = new Uint8Array(buf);
+  crypto.getRandomValues(arr);
+  return arr;
+}
+
+async function deriveKey(accountToken: string, salt: Uint8Array<ArrayBuffer>): Promise<CryptoKey> {
   const enc = new TextEncoder();
   const baseKey = await crypto.subtle.importKey(
     "raw",
@@ -59,8 +69,8 @@ async function deriveKey(accountToken: string, salt: Uint8Array): Promise<Crypto
  * Returns a JSON string ready to be stored in D1.
  */
 export async function encryptApiKeys(keys: ApiKeys, accountToken: string): Promise<string> {
-  const salt = crypto.getRandomValues(new Uint8Array(32));
-  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const salt = randomBytes(32);
+  const iv = randomBytes(12);
   const aesKey = await deriveKey(accountToken, salt);
 
   const enc = new TextEncoder();
@@ -75,7 +85,7 @@ export async function encryptApiKeys(keys: ApiKeys, accountToken: string): Promi
   const payload: EncryptedPayload = {
     salt: toHex(salt),
     iv: toHex(iv),
-    ciphertext: toHex(ciphertextBuf),
+    ciphertext: toHex(new Uint8Array(ciphertextBuf)),
   };
   return JSON.stringify(payload);
 }
