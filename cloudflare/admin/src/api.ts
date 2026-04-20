@@ -237,6 +237,11 @@ export async function batchApprove(items: Array<{ dd_id: string; version: string
   });
 }
 
+/** Mark every published-but-untrusted skill/package as 'reviewed' in one shot. */
+export async function trustAllPublished(trust: "reviewed" | "org-approved" = "reviewed") {
+  return apiPost<{ ok: boolean; updated: number }>("/registry/admin/trust-all-published", { trust });
+}
+
 export async function downloadPackageZip(ddId: string, version: string): Promise<ArrayBuffer> {
   const session = getSession();
   if (!session) throw new Error("Not authenticated");
@@ -339,25 +344,115 @@ export async function listReleases() {
 
 export type UploadReleaseResult = { success: boolean; asset_id: string; r2_key: string | null; sha256: string | null; size_bytes: number | null; download_url: string | null };
 
-export async function uploadRelease(
-  file: File | null,
-  meta: { version: string; platform: string; channel: string; release_notes: string; download_url?: string },
-) {
-  const form = new FormData();
-  form.append("metadata", JSON.stringify(meta));
-  if (file) form.append("file", file, file.name);
-  return apiUpload<UploadReleaseResult>("/releases/upload", form);
+/** Compute SHA-256 (hex) and SHA-512 (base64) for a file using the Web Crypto API. */
+async function computeHashes(file: File): Promise<{ sha256: string; sha512: string }> {
+  const buf = await file.arrayBuffer();
+  const [h256, h512] = await Promise.all([
+    crypto.subtle.digest("SHA-256", buf),
+    crypto.subtle.digest("SHA-512", buf),
+  ]);
+  const sha256 = Array.from(new Uint8Array(h256)).map(b => b.toString(16).padStart(2, "0")).join("");
+  const sha512 = btoa(String.fromCharCode(...new Uint8Array(h512)));
+  return { sha256, sha512 };
 }
 
+/**
+ * Two-step streaming upload (avoids Cloudflare 100 MB multipart-body limit):
+ *   1. POST /releases/upload-init — send JSON metadata + pre-computed hashes → get upload_id
+ *   2. PUT  /releases/upload-stream/{id} — stream raw binary to R2
+ *
+ * onProgress phases:
+ *   phase="hashing"   — computing SHA hashes (loaded = bytes hashed, total = file.size)
+ *   phase="uploading" — streaming to R2    (loaded = bytes sent,   total = file.size)
+ */
 export function uploadReleaseWithProgress(
   file: File | null,
   meta: { version: string; platform: string; channel: string; release_notes: string; download_url?: string },
-  onProgress: (p: UploadProgress) => void,
-) {
-  const form = new FormData();
-  form.append("metadata", JSON.stringify(meta));
-  if (file) form.append("file", file, file.name);
-  return apiUploadWithProgress<UploadReleaseResult>("/releases/upload", form, onProgress);
+  onProgress: (p: UploadProgress & { phase?: string }) => void,
+): Promise<UploadReleaseResult> {
+  return (async () => {
+    const session = getSession();
+    if (!session) throw new Error("Not authenticated");
+    const base = session.url.replace(/\/$/, "");
+
+    // ── External URL path (no file to upload) ──────────────────────────────────
+    if (!file) {
+      if (!meta.download_url?.trim()) throw new Error("File or download URL required");
+      const res = await fetch(base + "/releases/upload-init", {
+        method: "POST",
+        headers: { "Authorization": `Bearer ${session.token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          version: meta.version, platform: meta.platform, channel: meta.channel,
+          release_notes: meta.release_notes, download_url: meta.download_url,
+          // hashes not required for external URL
+          sha256: "", sha512: "", size_bytes: 0, filename: "",
+        }),
+      });
+      const data = await res.json() as any;
+      if (!res.ok) throw new Error(data?.error ?? `HTTP ${res.status}`);
+      onProgress({ loaded: 1, total: 1, speedBps: 0, phase: "done" });
+      return { success: true, asset_id: data.asset_id, r2_key: null, sha256: null, size_bytes: null, download_url: meta.download_url ?? null };
+    }
+
+    // ── Step 1: compute hashes (client-side) ───────────────────────────────────
+    onProgress({ loaded: 0, total: file.size, speedBps: 0, phase: "hashing" });
+    const { sha256, sha512 } = await computeHashes(file);
+    onProgress({ loaded: file.size, total: file.size, speedBps: 0, phase: "hashing" });
+
+    // ── Step 2: register metadata → get upload_id ──────────────────────────────
+    const initRes = await fetch(base + "/releases/upload-init", {
+      method: "POST",
+      headers: { "Authorization": `Bearer ${session.token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        version: meta.version, platform: meta.platform, channel: meta.channel,
+        release_notes: meta.release_notes,
+        sha256, sha512, size_bytes: file.size, filename: file.name,
+      }),
+    });
+    const initData = await initRes.json() as { upload_id: string; file_upload_needed: boolean; error?: string };
+    if (!initRes.ok) throw new Error(initData?.error ?? `HTTP ${initRes.status}`);
+
+    if (!initData.file_upload_needed) {
+      onProgress({ loaded: file.size, total: file.size, speedBps: 0, phase: "done" });
+      return { success: true, asset_id: initData.upload_id, r2_key: null, sha256, size_bytes: file.size, download_url: null };
+    }
+
+    // ── Step 3: stream binary directly to R2 (with XHR for progress) ───────────
+    return new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open("PUT", `${base}/releases/upload-stream/${initData.upload_id}`);
+      xhr.setRequestHeader("Authorization", `Bearer ${session.token}`);
+      xhr.setRequestHeader("Content-Type", "application/octet-stream");
+
+      let lastLoaded = 0;
+      let lastTime = Date.now();
+
+      xhr.upload.onprogress = (e) => {
+        const now = Date.now();
+        const elapsed = (now - lastTime) / 1000;
+        const delta = e.loaded - lastLoaded;
+        const speedBps = elapsed > 0.05 ? delta / elapsed : 0;
+        lastLoaded = e.loaded;
+        lastTime = now;
+        onProgress({ loaded: e.loaded, total: e.total || file.size, speedBps, phase: "uploading" });
+      };
+
+      xhr.onload = () => {
+        let data: any;
+        try { data = JSON.parse(xhr.responseText); } catch { data = {}; }
+        if (xhr.status >= 200 && xhr.status < 300) {
+          resolve({ success: true, asset_id: data.asset_id, r2_key: null, sha256, size_bytes: file.size, download_url: null });
+        } else {
+          reject(new Error(data?.error ?? `HTTP ${xhr.status}`));
+        }
+      };
+
+      xhr.onerror = () => reject(new Error(
+        "Network error during upload. If the file is very large (>500 MB), use the Download URL field instead."
+      ));
+      xhr.send(file);
+    });
+  })();
 }
 
 export async function promoteRelease(version: string) {

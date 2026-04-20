@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { listPackages, listVersions, setStatus, approvePackage, publishMetadata, getItemManifest } from "../api";
+import { listPackages, listVersions, setStatus, approvePackage, publishMetadata, getItemManifest, trustAllPublished } from "../api";
 import { Card, SectionTitle, Spinner, StatusBadge, TrustBadge, Btn, Select } from "../ui";
 
 type Pkg = Awaited<ReturnType<typeof listPackages>>["items"][number];
@@ -669,6 +669,15 @@ export default function PackagesPage() {
 
   const showToast = (msg: string) => { setToast(msg); setTimeout(() => setToast(""), 2500); };
 
+  const handleTrustAll = async () => {
+    if (!confirm("Mark ALL published-but-untrusted packages as 'reviewed'? This cannot be undone.")) return;
+    try {
+      const res = await trustAllPublished("reviewed");
+      showToast(`Trusted ${res.updated} packages`);
+      load(filter || undefined);
+    } catch (e: any) { setErr(e.message); }
+  };
+
   const handleSetStatus = async (pkg: Pkg, newStatus: string) => {
     try {
       await setStatus(pkg.id, pkg.version, newStatus);
@@ -698,7 +707,7 @@ export default function PackagesPage() {
 
   return (
     <div style={{ padding: 24 }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 16 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 16, flexWrap: "wrap" }}>
         <SectionTitle>Packages</SectionTitle>
         <Select value={filter} onChange={setFilter} options={[
           { value: "", label: "All statuses" },
@@ -707,6 +716,9 @@ export default function PackagesPage() {
           { value: "deprecated", label: "Deprecated" },
           { value: "yanked", label: "Yanked" },
         ]} />
+        <Btn variant="ghost" size="sm" onClick={handleTrustAll}>
+          ✓ Trust All Published
+        </Btn>
         <Btn onClick={() => load(filter || undefined)} variant="ghost">Refresh</Btn>
       </div>
 
