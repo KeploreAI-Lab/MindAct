@@ -1,6 +1,6 @@
 {
   "name": "mindact",
-  "version": "0.0.3",
+  "version": "0.0.5",
   "description": "MindAct — AI-powered knowledge and skill management desktop app",
   "author": "KeploreAI <hi@physical-mind.ai>",
   "type": "module",
