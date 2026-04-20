@@ -54,6 +54,7 @@ jobs:
           python-version: '3.11'
 
       - name: Prebuild (compile server + build frontend)
+        shell: bash
         run: bash scripts/prebuild.sh
 
       # electron-builder reads APPLE_* secrets for code signing on macOS.
@@ -192,17 +193,22 @@ jobs:
             fi
             local FILENAME
             FILENAME=$(basename "$FILE")
+            local SHA256
+            SHA256=$(openssl dgst -sha256 "$FILE" | awk '{print $2}')
             local SHA512
             SHA512=$(openssl dgst -sha512 -binary "$FILE" | base64 | tr -d '\n')
+            local SIZE_BYTES
+            SIZE_BYTES=$(wc -c < "$FILE" | tr -d ' ')
             local DL_URL="$REPO_URL/releases/download/$GITHUB_REF_NAME/$FILENAME"
 
-            echo "[$PLATFORM] Registering: $FILENAME"
+            echo "[$PLATFORM] Registering: $FILENAME ($SIZE_BYTES bytes)"
             echo "[$PLATFORM] URL: $DL_URL"
+            echo "[$PLATFORM] SHA256: $SHA256"
             echo "[$PLATFORM] SHA512: ${SHA512:0:20}..."
 
             local METADATA
-            METADATA=$(printf '{"version":"%s","platform":"%s","channel":"stable","sha512":"%s","download_url":"%s"}' \
-              "$VERSION" "$PLATFORM" "$SHA512" "$DL_URL")
+            METADATA=$(printf '{"version":"%s","platform":"%s","channel":"stable","sha256":"%s","sha512":"%s","size_bytes":%s,"download_url":"%s"}' \
+              "$VERSION" "$PLATFORM" "$SHA256" "$SHA512" "$SIZE_BYTES" "$DL_URL")
 
             HTTP=$(curl -s -o /tmp/up_${PLATFORM}.json -w "%{http_code}" -X POST \
               -H "Authorization: Bearer $REGISTRY_TOKEN" \
