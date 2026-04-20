@@ -269,8 +269,18 @@ function removeCloudSkills(skillsRoot: string): void {
   }
 }
 
+// Cross-platform credentials directory — matches pty-worker.cjs physmindConfigDir()
+// Windows: %APPDATA%\physmind  (C:\Users\<user>\AppData\Roaming\physmind)
+// macOS/Linux: ~/.config/physmind
+function physmindConfigDir(): string {
+  if (process.platform === "win32") {
+    return join(process.env.APPDATA || homedir(), "physmind");
+  }
+  return join(homedir(), ".config", "physmind");
+}
+
 function saveKplrCredentials(key: string) {
-  const credDir = join(homedir(), ".config", "physmind");
+  const credDir = physmindConfigDir();
   const credFile = join(credDir, "credentials");
   if (!existsSync(credDir)) mkdirSync(credDir, { recursive: true });
   // Preserve existing lines other than KPLR_KEY
@@ -282,7 +292,7 @@ function saveKplrCredentials(key: string) {
 }
 
 function readKplrCredentials(): string | null {
-  const credFile = join(homedir(), ".config", "physmind", "credentials");
+  const credFile = join(physmindConfigDir(), "credentials");
   if (!existsSync(credFile)) return null;
   try {
     const lines = readFileSync(credFile, "utf-8").split("\n");
@@ -295,7 +305,7 @@ function readKplrCredentials(): string | null {
 }
 
 function saveMinimaxCredentials(key: string) {
-  const credDir = join(homedir(), ".config", "physmind");
+  const credDir = physmindConfigDir();
   const credFile = join(credDir, "credentials");
   if (!existsSync(credDir)) mkdirSync(credDir, { recursive: true });
   let existing = "";
@@ -306,7 +316,7 @@ function saveMinimaxCredentials(key: string) {
 }
 
 function readMinimaxCredentials(): string | null {
-  const credFile = join(homedir(), ".config", "physmind", "credentials");
+  const credFile = join(physmindConfigDir(), "credentials");
   if (!existsSync(credFile)) return null;
   try {
     const lines = readFileSync(credFile, "utf-8").split("\n");
@@ -319,7 +329,7 @@ function readMinimaxCredentials(): string | null {
 }
 
 function saveGlmCredentials(key: string) {
-  const credDir = join(homedir(), ".config", "physmind");
+  const credDir = physmindConfigDir();
   const credFile = join(credDir, "credentials");
   if (!existsSync(credDir)) mkdirSync(credDir, { recursive: true });
   let existing = "";
@@ -330,7 +340,7 @@ function saveGlmCredentials(key: string) {
 }
 
 function readGlmCredentials(): string | null {
-  const credFile = join(homedir(), ".config", "physmind", "credentials");
+  const credFile = join(physmindConfigDir(), "credentials");
   if (!existsSync(credFile)) return null;
   try {
     const lines = readFileSync(credFile, "utf-8").split("\n");
