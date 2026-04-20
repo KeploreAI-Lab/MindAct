@@ -21,7 +21,6 @@ mindact-release*.zip
 /examples/skills
 /examples/skills
 /examples
-/cloudflare/admin
 create-release.sh
 .env.example
 INFRASTRUCTURE.md

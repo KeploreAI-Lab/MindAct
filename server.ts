@@ -2,6 +2,11 @@ import { serve } from "bun";
 import { existsSync, mkdirSync, readdirSync, rmSync, statSync, readFileSync, writeFileSync, unlinkSync } from "fs";
 import { join, extname, relative, basename } from "path";
 import { homedir } from "os";
+
+// In packaged Electron, electron-main.cjs sets MINDACT_RESOURCES = process.resourcesPath
+// so that the bun-compiled binary (which has import.meta.dir baked to the build-time path)
+// can locate bundled assets at runtime. Fall back to import.meta.dir in dev mode.
+const RESOURCE_DIR: string = process.env.MINDACT_RESOURCES ?? import.meta.dir;
 import { buildIndex, collectMdFiles, parseLinks, BRAIN_INDEX_PATH } from "./decision_manager/build_index";
 import { analyzeDependencies } from "./decision_manager/tasks/dependency_analysis";
 import { loadLocalRegistry } from "./decision_manager/registry/local_registry";
@@ -677,7 +682,7 @@ interface PtySession {
 
 const ptySessions = new Map<import("bun").ServerWebSocket<unknown>, PtySession>();
 
-const PTY_WORKER = join(import.meta.dir, "pty-worker.cjs");
+const PTY_WORKER = join(RESOURCE_DIR, "pty-worker.cjs");
 
 function spawnPty(ws: import("bun").ServerWebSocket<unknown>, projectPath: string) {
   const existing = ptySessions.get(ws);
@@ -692,11 +697,22 @@ function spawnPty(ws: import("bun").ServerWebSocket<unknown>, projectPath: strin
 
   const cwd = (projectPath && existsSync(projectPath)) ? projectPath : homedir();
 
+  // When running inside a packaged Electron app, NODE_BINARY points to the
+  // Electron binary (not a plain node executable).  Setting ELECTRON_RUN_AS_NODE=1
+  // makes Electron behave as Node.js, so we can run pty-worker.cjs without
+  // requiring a separate Node installation on the user's machine.
+  const useElectronAsNode = process.env.ELECTRON_AS_NODE === "1";
+  const ptyEnv: Record<string, string> = {
+    ...process.env as Record<string, string>,
+    PTY_CWD: cwd,
+    ...(useElectronAsNode ? { ELECTRON_RUN_AS_NODE: "1" } : {}),
+  };
+
   let worker: ReturnType<typeof Bun.spawn>;
   try {
     worker = Bun.spawn([process.env.NODE_BINARY || nodeBin, PTY_WORKER], {
       cwd,
-      env: { ...process.env as Record<string, string>, PTY_CWD: cwd },
+      env: ptyEnv,
       stdin: "pipe",
       stdout: "pipe",
       stderr: "pipe",
@@ -843,6 +859,44 @@ h2{color:#4ec9b0;margin:0;}p{color:#666;font-size:13px;margin:0;}</style></head>
       try {
         const res = await fetch(`${registryUrl.replace(/\/$/, "")}/auth/me`, {
           headers: { "Authorization": `Bearer ${config.account_token}` },
+        });
+        const data = await res.json();
+        return jsonResponse(data, res.status);
+      } catch {
+        return jsonResponse({ error: "Registry unreachable" }, 503);
+      }
+    }
+
+    // ── GET /api/user/api-keys — proxy to worker /user/api-keys ──────────────
+    if (url.pathname === "/api/user/api-keys" && req.method === "GET") {
+      const config = readConfig();
+      if (!config?.account_token) return jsonResponse({ error: "Not signed in" }, 401);
+      const registryUrl = config.registry_url ?? "https://registry.physical-mind.ai";
+      try {
+        const res = await fetch(`${registryUrl.replace(/\/$/, "")}/user/api-keys`, {
+          headers: { "Authorization": `Bearer ${config.account_token}` },
+        });
+        const data = await res.json();
+        return jsonResponse(data, res.status);
+      } catch {
+        return jsonResponse({ error: "Registry unreachable" }, 503);
+      }
+    }
+
+    // ── PUT /api/user/api-keys — proxy to worker /user/api-keys ──────────────
+    if (url.pathname === "/api/user/api-keys" && req.method === "PUT") {
+      const config = readConfig();
+      if (!config?.account_token) return jsonResponse({ error: "Not signed in" }, 401);
+      const registryUrl = config.registry_url ?? "https://registry.physical-mind.ai";
+      try {
+        const body = await req.text();
+        const res = await fetch(`${registryUrl.replace(/\/$/, "")}/user/api-keys`, {
+          method: "PUT",
+          headers: {
+            "Authorization": `Bearer ${config.account_token}`,
+            "Content-Type": "application/json",
+          },
+          body,
         });
         const data = await res.json();
         return jsonResponse(data, res.status);
@@ -1439,7 +1493,7 @@ h2{color:#4ec9b0;margin:0;}p{color:#666;font-size:13px;margin:0;}</style></head>
     }
 
     // Serve static files from client/dist
-    const distDir = join(import.meta.dir, "client", "dist");
+    const distDir = join(RESOURCE_DIR, "client", "dist");
     if (existsSync(distDir)) {
       let filePath = join(distDir, url.pathname === "/" ? "index.html" : url.pathname);
       if (!existsSync(filePath)) filePath = join(distDir, "index.html");

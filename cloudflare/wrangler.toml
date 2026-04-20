@@ -1,0 +1,38 @@
+name = "mindact-registry"
+main = "worker/index.ts"
+compatibility_date = "2024-11-01"
+compatibility_flags = ["nodejs_compat"]
+
+account_id = "4fcc9a0a6035a6257c36d247e3075ea8"
+
+# D1 Database binding
+[[d1_databases]]
+binding = "DB"
+database_name = "mindact-registry"
+database_id = "071cb553-5d39-487e-b76f-f0315ba69c88"
+migrations_dir = "d1/migrations"
+
+# R2 Bucket binding (package blobs)
+[[r2_buckets]]
+binding = "BUCKET"
+bucket_name = "mindact-packages"
+
+# KV Namespace binding (cache)
+[[kv_namespaces]]
+binding = "REGISTRY_KV"
+id = "e545d75e73b84b82acb86816a293620a"
+preview_id = "5d3aec113b334852ac78b5fef7c76c88"
+
+# Environment variables
+[vars]
+ENVIRONMENT = "production"
+# REGISTRY_TOKEN is a secret — set via: wrangler secret put REGISTRY_TOKEN
+# Turnstile site key (public) — create widget at dash.cloudflare.com → Turnstile, then paste here:
+TURNSTILE_SITE_KEY = "0x4AAAAAAC-kUeaEOMc8yQpN"
+# TURNSTILE_SECRET is a secret — set via: wrangler secret put TURNSTILE_SECRET
+
+# ─── Local development ────────────────────────────────────────────────────────
+[dev]
+port = 8787
+local_protocol = "http"
+
