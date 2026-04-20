@@ -2552,16 +2552,17 @@ let _retSessionId = '';   // otp_session_id for retrieve resend
 let _regWidgetId = null;  // explicit Turnstile widget ID for register tab
 let _retWidgetId = null;  // explicit Turnstile widget ID for retrieve tab
 
-function _turnstileOpts(callback) {
+function _turnstileOpts(errId) {
   return { sitekey: TURNSTILE_SITE_KEY, theme: 'auto', size: 'flexible',
-    callback: (t) => { _cfToken = t; }, 'expired-callback': () => { _cfToken = ''; } };
+    callback: (t) => { _cfToken = t; if (errId) setErr(errId, ''); },
+    'expired-callback': () => { _cfToken = ''; } };
 }
 
 // Called by Turnstile once api.js is ready (render=explicit&onload=onTurnstileLoad)
 function onTurnstileLoad() {
   if (!TURNSTILE_SITE_KEY) return;
   // Only render widget for the initially visible tab (register)
-  _regWidgetId = window.turnstile.render('#reg-turnstile-widget', _turnstileOpts());
+  _regWidgetId = window.turnstile.render('#reg-turnstile-widget', _turnstileOpts('reg-err'));
 }
 
 // Show/hide "Return" button based on whether a callback is configured
@@ -2579,7 +2580,7 @@ function showTab(name, el) {
   // Lazily render Turnstile for the newly visible tab (ensures only one widget at a time)
   if (TURNSTILE_SITE_KEY && window.turnstile) {
     if (name === 'retrieve' && _retWidgetId === null) {
-      _retWidgetId = window.turnstile.render('#ret-turnstile-widget', _turnstileOpts());
+      _retWidgetId = window.turnstile.render('#ret-turnstile-widget', _turnstileOpts('ret-err'));
     }
     _cfToken = '';
   }
