@@ -6,25 +6,36 @@ function sendLine(obj) {
   process.stdout.write(JSON.stringify(obj) + '\n');
 }
 
+// In the packaged Electron app, electron-builder's asarUnpack places node-pty at:
+//   resources/app.asar.unpacked/node_modules/node-pty/
+// but __dirname here is resources/, so we must probe both layouts.
 let pty;
-try {
-  pty = require('./node_modules/node-pty');
-} catch (err) {
-  const msg = err instanceof Error ? err.message : String(err);
-  const rebuildCmd = 'cd node_modules/node-pty && npx --yes node-gyp@10 rebuild';
-  const hint =
-    process.platform === 'linux'
-      ? `From repo root: ${rebuildCmd}  (e.g. apt install build-essential)`
-      : `From repo root: ${rebuildCmd}`;
-  sendLine({
-    type: 'data',
-    data:
-      '\r\n\x1b[31m[MindAct] Terminal backend (node-pty) failed to load.\x1b[0m\r\n' +
-      '\x1b[90m' + msg + '\x1b[0m\r\n' +
-      '\x1b[90m' + hint + '\x1b[0m\r\n\r\n',
-  });
-  sendLine({ type: 'exit' });
-  process.exit(1);
+{
+  const nodePtyPaths = [
+    './node_modules/node-pty',                       // dev / extraResources layout
+    './app.asar.unpacked/node_modules/node-pty',     // asarUnpack layout (packaged)
+  ];
+  let lastErr;
+  for (const p of nodePtyPaths) {
+    try { pty = require(p); break; } catch (e) { lastErr = e; }
+  }
+  if (!pty) {
+    const msg = lastErr instanceof Error ? lastErr.message : String(lastErr);
+    const rebuildCmd = 'cd node_modules/node-pty && npx --yes node-gyp@10 rebuild';
+    const hint =
+      process.platform === 'linux'
+        ? `From repo root: ${rebuildCmd}  (e.g. apt install build-essential)`
+        : `From repo root: ${rebuildCmd}`;
+    sendLine({
+      type: 'data',
+      data:
+        '\r\n\x1b[31m[MindAct] Terminal backend (node-pty) failed to load.\x1b[0m\r\n' +
+        '\x1b[90m' + msg + '\x1b[0m\r\n' +
+        '\x1b[90m' + hint + '\x1b[0m\r\n\r\n',
+    });
+    sendLine({ type: 'exit' });
+    process.exit(1);
+  }
 }
 
 const readline = require('readline');
