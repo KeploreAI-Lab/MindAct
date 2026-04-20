@@ -268,6 +268,12 @@ Open **Settings** (top bar) and enter:
 - **Project path** — working project directory opened in the terminal
 - **Skills path** — folder of `.skill` files or unpacked skill directories
 
+If you want to use **MINIMAX** API KEY:
+- copy .env.example save as .env
+- set your minimax key 
+- restart mindact using `./restart.sh`
+
+
 ### Development: frontend hot reload (server already on 3001)
 
 `bun run dev` at the **repo root** starts **two** processes: Bun on **3001** and Vite on **5173**. If something is already listening on 3001 (for example after `./restart.sh` or `bun run server.ts`), that command fails with `EADDRINUSE` for the server half.
