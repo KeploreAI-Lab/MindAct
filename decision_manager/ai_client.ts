@@ -28,6 +28,11 @@ const GLM_BASE_URL = "https://open.bigmodel.cn/api/paas/v4";
 const GLM_DEFAULT_MODEL = "glm-4-plus";
 const GLM_FAST_MODEL = "glm-4-flash";
 
+// Nvidia NIM API (OpenAI-compatible) — free-tier models including Kimi 2.5
+const NVIDIA_BASE_URL = "https://integrate.api.nvidia.com/v1";
+const NVIDIA_DEFAULT_MODEL = "moonshotai/kimi-k2.5";
+const NVIDIA_FAST_MODEL = "moonshotai/kimi-k1.5";
+
 // ── Credential / config readers ──────────────────────────────────────────────
 
 function physmindCredFile(): string {
@@ -49,14 +54,30 @@ function readCredKey(prefix: string): string | null {
 function readMinimaxKey(): string | null { return readCredKey("MINIMAX_KEY"); }
 function readKplrKey(): string | null { return readCredKey("KPLR_KEY"); }
 function readGlmKey(): string | null { return readCredKey("GLM_KEY"); }
+function readNvidiaKey(): string | null { return readCredKey("NVIDIA_KEY"); }
+function readCustomKey(): string | null { return readCredKey("CUSTOM_KEY"); }
 
-function readSelectedBackend(): "minimax" | "anthropic" | "glm" | "kplr" | null {
+function readCustomProviderConfig(): { url: string | null; model: string | null; modelFast: string | null } {
+  try {
+    const cfgFile = join(homedir(), ".physmind", "config.json");
+    if (!existsSync(cfgFile)) return { url: null, model: null, modelFast: null };
+    const cfg = JSON.parse(readFileSync(cfgFile, "utf-8"));
+    return {
+      url: cfg.custom_provider_url ?? null,
+      model: cfg.custom_provider_model ?? null,
+      modelFast: cfg.custom_provider_model_fast ?? null,
+    };
+  } catch {}
+  return { url: null, model: null, modelFast: null };
+}
+
+function readSelectedBackend(): "minimax" | "anthropic" | "glm" | "kplr" | "nvidia" | "custom" | null {
   try {
     const cfgFile = join(homedir(), ".physmind", "config.json");
     if (!existsSync(cfgFile)) return null;
     const cfg = JSON.parse(readFileSync(cfgFile, "utf-8"));
     const b = cfg.selected_backend;
-    if (b === "minimax" || b === "anthropic" || b === "glm") return b;
+    if (b === "minimax" || b === "anthropic" || b === "glm" || b === "nvidia" || b === "custom") return b;
   } catch {}
   return null;
 }
@@ -69,6 +90,12 @@ function toDashScopeModel(model: string): string {
 }
 function toGlmModel(model: string): string {
   return model === FAST_MODEL ? GLM_FAST_MODEL : GLM_DEFAULT_MODEL;
+}
+function toNvidiaModel(model: string): string {
+  return model === FAST_MODEL ? NVIDIA_FAST_MODEL : NVIDIA_DEFAULT_MODEL;
+}
+function toCustomModel(model: string, defaultModel: string, fastModel: string | null): string {
+  return model === FAST_MODEL && fastModel ? fastModel : defaultModel;
 }
 
 // ── OpenAI-compatible fetch helpers (DashScope / GLM) ───────────────────────
@@ -144,26 +171,43 @@ function getAnthropicClient(apiKey?: string): Anthropic {
 
 // ── Backend resolution ───────────────────────────────────────────────────────
 
-type Backend = "minimax" | "anthropic" | "glm" | "kplr";
+type Backend = "minimax" | "anthropic" | "glm" | "kplr" | "nvidia" | "custom";
 
-function resolveBackend(): { backend: Backend; minimaxKey: string | null; kplrKey: string | null; glmKey: string | null } {
+interface ResolvedBackend {
+  backend: Backend;
+  minimaxKey: string | null;
+  kplrKey: string | null;
+  glmKey: string | null;
+  nvidiaKey: string | null;
+  customKey: string | null;
+  customUrl: string | null;
+  customModel: string | null;
+  customModelFast: string | null;
+}
+
+function resolveBackend(): ResolvedBackend {
   const minimaxKey = readMinimaxKey() ?? process.env.MINIMAX_KEY ?? null;
   const kplrKey = readKplrKey() ?? process.env.KPLR_KEY ?? null;
   const glmKey = readGlmKey() ?? process.env.GLM_KEY ?? null;
+  const nvidiaKey = readNvidiaKey() ?? process.env.NVIDIA_KEY ?? null;
+  const customKey = readCustomKey() ?? process.env.CUSTOM_KEY ?? null;
+  const { url: customUrl, model: customModel, modelFast: customModelFast } = readCustomProviderConfig();
   const selected = readSelectedBackend();
 
   let backend: Backend;
   if (selected === "minimax" && minimaxKey) backend = "minimax";
   else if (selected === "anthropic") backend = "anthropic";
   else if (selected === "glm" && glmKey) backend = "glm";
+  else if (selected === "nvidia" && nvidiaKey) backend = "nvidia";
+  else if (selected === "custom" && customKey && customUrl) backend = "custom";
   else if (selected) {
     // Selected backend key missing — fall back by presence
-    backend = minimaxKey ? "minimax" : kplrKey ? "kplr" : glmKey ? "glm" : "anthropic";
+    backend = minimaxKey ? "minimax" : nvidiaKey ? "nvidia" : (customKey && customUrl ? "custom" : kplrKey ? "kplr" : glmKey ? "glm" : "anthropic");
   } else {
     // No explicit selection — legacy heuristic
-    backend = minimaxKey ? "minimax" : kplrKey ? "kplr" : glmKey ? "glm" : "anthropic";
+    backend = minimaxKey ? "minimax" : nvidiaKey ? "nvidia" : (customKey && customUrl ? "custom" : kplrKey ? "kplr" : glmKey ? "glm" : "anthropic");
   }
-  return { backend, minimaxKey, kplrKey, glmKey };
+  return { backend, minimaxKey, kplrKey, glmKey, nvidiaKey, customKey, customUrl, customModel, customModelFast };
 }
 
 // ── Public API ───────────────────────────────────────────────────────────────
@@ -179,7 +223,7 @@ export interface AiCallOptions {
 }
 
 export async function aiCall(opts: AiCallOptions): Promise<string> {
-  const { backend, minimaxKey, kplrKey, glmKey } = resolveBackend();
+  const { backend, minimaxKey, kplrKey, glmKey, nvidiaKey, customKey, customUrl, customModel, customModelFast } = resolveBackend();
   const model = opts.model ?? DEFAULT_MODEL;
   const maxTokens = opts.maxTokens ?? DEFAULT_MAX_TOKENS;
 
@@ -192,6 +236,20 @@ export async function aiCall(opts: AiCallOptions): Promise<string> {
     const block = response.content.find(b => b.type === "text");
     if (!block || block.type !== "text") throw new Error("No text block in response");
     return block.text;
+  }
+
+  if (backend === "nvidia" && nvidiaKey) {
+    const msgs: DSMessage[] = [];
+    if (opts.system) msgs.push({ role: "system", content: opts.system });
+    for (const m of opts.messages) msgs.push({ role: m.role, content: m.content });
+    return dsCall(nvidiaKey, toNvidiaModel(model), msgs, maxTokens, opts.temperature, NVIDIA_BASE_URL);
+  }
+
+  if (backend === "custom" && customKey && customUrl && customModel) {
+    const msgs: DSMessage[] = [];
+    if (opts.system) msgs.push({ role: "system", content: opts.system });
+    for (const m of opts.messages) msgs.push({ role: m.role, content: m.content });
+    return dsCall(customKey, toCustomModel(model, customModel, customModelFast), msgs, maxTokens, opts.temperature, customUrl);
   }
 
   if (backend === "glm" && glmKey) {
@@ -226,7 +284,7 @@ export interface StreamCallOptions extends AiCallOptions {
 }
 
 export async function aiStream(opts: StreamCallOptions): Promise<void> {
-  const { backend, minimaxKey, kplrKey, glmKey } = resolveBackend();
+  const { backend, minimaxKey, kplrKey, glmKey, nvidiaKey, customKey, customUrl, customModel, customModelFast } = resolveBackend();
   const model = opts.model ?? DEFAULT_MODEL;
   const maxTokens = opts.maxTokens ?? DEFAULT_MAX_TOKENS;
 
@@ -245,6 +303,20 @@ export async function aiStream(opts: StreamCallOptions): Promise<void> {
     }
     opts.onDone?.(fullText);
     return;
+  }
+
+  if (backend === "nvidia" && nvidiaKey) {
+    const msgs: DSMessage[] = [];
+    if (opts.system) msgs.push({ role: "system", content: opts.system });
+    for (const m of opts.messages) msgs.push({ role: m.role, content: m.content });
+    return dsStream(nvidiaKey, toNvidiaModel(model), msgs, maxTokens, opts.temperature, opts.onChunk, opts.onDone, NVIDIA_BASE_URL);
+  }
+
+  if (backend === "custom" && customKey && customUrl && customModel) {
+    const msgs: DSMessage[] = [];
+    if (opts.system) msgs.push({ role: "system", content: opts.system });
+    for (const m of opts.messages) msgs.push({ role: m.role, content: m.content });
+    return dsStream(customKey, toCustomModel(model, customModel, customModelFast), msgs, maxTokens, opts.temperature, opts.onChunk, opts.onDone, customUrl);
   }
 
   if (backend === "glm" && glmKey) {

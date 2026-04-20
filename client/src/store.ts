@@ -13,7 +13,12 @@ export interface Config {
   minimax_token?: string;
   glm_token?: string;
   anthropic_token?: string;
-  selected_backend?: "minimax" | "anthropic" | "glm";
+  nvidia_token?: string;
+  custom_provider_key?: string;
+  custom_provider_url?: string;
+  custom_provider_model?: string;
+  custom_provider_model_fast?: string;
+  selected_backend?: "minimax" | "anthropic" | "glm" | "nvidia" | "custom";
   account_token?: string;   // mact_xxx — MindAct user token for registry sync
   registry_url?: string;    // Override default registry URL
   admin_url?: string;       // Override default admin UI URL (for auth redirect)
@@ -112,6 +117,7 @@ interface AppState {
 
   setRegistryStatus: (status: RegistryConnectionStatus, stats?: RegistryStats | null, url?: string) => void;
   markInstalled: (ddId: string) => void;
+  removeInstalledPackageId: (ddId: string) => void;
   initInstalledFromLocal: (ids: string[]) => void;
   setInstallProgress: (ddId: string, progress: number) => void;
   clearInstallProgress: (ddId: string) => void;
@@ -199,6 +205,11 @@ export const useStore = create<AppState>((set) => ({
   markInstalled: (ddId) => set((s) => ({
     installedPackageIds: new Set([...s.installedPackageIds, ddId]),
   })),
+  removeInstalledPackageId: (ddId) => set((s) => {
+    const next = new Set(s.installedPackageIds);
+    next.delete(ddId);
+    return { installedPackageIds: next };
+  }),
   initInstalledFromLocal: (ids) => set((s) => ({
     // Merge disk-state ids with any in-session marks (so mid-session installs survive reloads)
     installedPackageIds: new Set([...ids, ...s.installedPackageIds]),

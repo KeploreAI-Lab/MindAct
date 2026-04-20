@@ -44,6 +44,7 @@ interface UserDetail {
   installs_count: number;
   api_keys_synced: boolean;
   api_keys_updated_at: string | null;
+  api_keys_provider_list: string[];
 }
 
 interface OrgRow {
@@ -198,14 +199,23 @@ function UserDetailPanel({ userId, onClose, onSuspendChange }: {
                   <div style={{ fontSize: 9, color: "#444", marginTop: 2 }}>{s.label}</div>
                 </div>
               ))}
-              {/* API key sync status — encrypted blob NOT exposed to admin */}
-              <div style={{ flex: 1, minWidth: 70, background: "#0d0d14", borderRadius: 6, padding: "8px 10px", textAlign: "center" }}>
-                <div style={{ fontSize: 12, fontWeight: 700, color: detail.api_keys_synced ? "#4ec9b0" : "#555" }}>
-                  {detail.api_keys_synced ? "Synced" : "None"}
+              {/* API key sync status — encrypted blob NOT exposed to admin; only provider names shown */}
+              <div style={{ flex: 2, minWidth: 120, background: "#0d0d14", borderRadius: 6, padding: "8px 10px" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 4 }}>
+                  <div style={{ fontSize: 12, fontWeight: 700, color: detail.api_keys_synced ? "#4ec9b0" : "#555" }}>
+                    {detail.api_keys_synced ? `${detail.api_keys_provider_list.length} Provider${detail.api_keys_provider_list.length !== 1 ? "s" : ""}` : "None"}
+                  </div>
+                  <div style={{ fontSize: 9, color: "#444" }}>API Keys</div>
                 </div>
-                <div style={{ fontSize: 9, color: "#444", marginTop: 2 }}>API Keys</div>
+                {detail.api_keys_provider_list.length > 0 && (
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+                    {detail.api_keys_provider_list.map(p => (
+                      <Badge key={p} text={p} color="#7dd3fc" />
+                    ))}
+                  </div>
+                )}
                 {detail.api_keys_synced && detail.api_keys_updated_at && (
-                  <div style={{ fontSize: 8, color: "#333", marginTop: 2 }}>
+                  <div style={{ fontSize: 8, color: "#333", marginTop: 4 }}>
                     {relativeTime(detail.api_keys_updated_at)}
                   </div>
                 )}

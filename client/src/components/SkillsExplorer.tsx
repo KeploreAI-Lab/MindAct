@@ -266,12 +266,14 @@ function GitHubImportWizard({ onClose, onImported, lang }: {
 // ─── Registry Card ────────────────────────────────────────────────────────────
 
 function RegistryCard({ dd, lang, onInstalled }: { dd: DecisionDependency; lang: string; onInstalled?: () => void }) {
-  const { installedPackageIds, installProgress, markInstalled, setInstallProgress, clearInstallProgress } = useStore();
+  const { installedPackageIds, installProgress, markInstalled, removeInstalledPackageId, setInstallProgress, clearInstallProgress } = useStore();
   const [expanded, setExpanded] = useState(false);
   const [content, setContent] = useState<string | null>(null);
   const [loadingContent, setLoadingContent] = useState(false);
   const [installError, setInstallError] = useState<string | null>(null);
   const [showUntrustedDialog, setShowUntrustedDialog] = useState(false);
+  const [isUninstalling, setIsUninstalling] = useState(false);
+  const [showUninstallConfirm, setShowUninstallConfirm] = useState(false);
   const color = trustColor(dd.trust);
 
   const isInstalled = installedPackageIds.has(dd.id);
@@ -326,6 +328,24 @@ function RegistryCard({ dd, lang, onInstalled }: { dd: DecisionDependency; lang:
     }
   };
 
+  const doUninstall = async () => {
+    setIsUninstalling(true);
+    setShowUninstallConfirm(false);
+    try {
+      const res = await fetch(`/api/registry/uninstall/${encodeURIComponent(dd.id)}`, { method: "DELETE" });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({ error: "Uninstall failed" })) as any;
+        throw new Error(data.error ?? "Uninstall failed");
+      }
+      removeInstalledPackageId(dd.id);
+      onInstalled?.(); // refresh Local tab tree
+    } catch (e: any) {
+      setInstallError(e.message);
+    } finally {
+      setIsUninstalling(false);
+    }
+  };
+
   return (
     <>
     {/* Untrusted install confirmation dialog */}
@@ -345,25 +365,18 @@ function RegistryCard({ dd, lang, onInstalled }: { dd: DecisionDependency; lang:
           onClick={e => e.stopPropagation()}
         >
           <div style={{ fontSize: 13, color: "#e05555", fontWeight: 700, marginBottom: 8 }}>
-            ⚠ {lang === "zh" ? "未经审核的包" : "Unreviewed Package"}
+            ⚠ {t(lang as any, "skill_untrusted_title")}
           </div>
           <div style={{ fontSize: 11, color: "#aaa", marginBottom: 6 }}>
             <b style={{ color: "#ccc" }}>{dd.name}</b>{" "}
-            {lang === "zh"
-              ? "未经任何审核人审核。仅在信任来源时安装。"
-              : "has not been reviewed by a trusted reviewer. Only install from sources you trust."}
+            {t(lang as any, "skill_untrusted_body")}
           </div>
           <div style={{ fontSize: 10, color: "#666", marginBottom: 14 }}>
-            {lang === "zh"
-              ? "安装后，该技能在执行时会受到限制（trust=untrusted）。"
-              : "After install, this skill's execution will be restricted (trust=untrusted)."}
+            {t(lang as any, "skill_untrusted_note")}
           </div>
           <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
-            <button
-              onClick={() => setShowUntrustedDialog(false)}
-              style={ghostBtn}
-            >
-              {lang === "zh" ? "取消" : "Cancel"}
+            <button onClick={() => setShowUntrustedDialog(false)} style={ghostBtn}>
+              {t(lang as any, "skill_cancel")}
             </button>
             <button
               onClick={() => { setShowUntrustedDialog(false); doInstall(); }}
@@ -372,7 +385,38 @@ function RegistryCard({ dd, lang, onInstalled }: { dd: DecisionDependency; lang:
                 color: "#e05555", cursor: "pointer", fontSize: 11, padding: "5px 14px", fontWeight: 600,
               }}
             >
-              {lang === "zh" ? "仍然安装" : "Install Anyway"}
+              {t(lang as any, "skill_install_anyway")}
+            </button>
+          </div>
+        </div>
+      </div>
+    )}
+
+    {/* Uninstall confirmation dialog */}
+    {showUninstallConfirm && (
+      <div
+        style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.75)", zIndex: 300, display: "flex", alignItems: "center", justifyContent: "center" }}
+        onClick={e => { e.stopPropagation(); setShowUninstallConfirm(false); }}
+      >
+        <div
+          style={{ background: "#1a1a24", border: "1px solid #44444488", borderRadius: 8, width: "min(360px, 90%)", padding: "18px 20px" }}
+          onClick={e => e.stopPropagation()}
+        >
+          <div style={{ fontSize: 13, color: "#d4d4d4", fontWeight: 700, marginBottom: 8 }}>
+            {t(lang as any, "skill_uninstall")} — {dd.name}
+          </div>
+          <div style={{ fontSize: 11, color: "#888", marginBottom: 14 }}>
+            {t(lang as any, "skill_uninstall_confirm")}
+          </div>
+          <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+            <button onClick={() => setShowUninstallConfirm(false)} style={ghostBtn}>
+              {t(lang as any, "skill_cancel")}
+            </button>
+            <button
+              onClick={doUninstall}
+              style={{ background: "#2a1818", border: "1px solid #cc444488", borderRadius: 4, color: "#e05555", cursor: "pointer", fontSize: 11, padding: "5px 14px", fontWeight: 600 }}
+            >
+              {t(lang as any, "skill_uninstall")}
             </button>
           </div>
         </div>
@@ -391,11 +435,24 @@ function RegistryCard({ dd, lang, onInstalled }: { dd: DecisionDependency; lang:
         <span style={{ fontSize: 9, color, border: `1px solid ${color}44`, borderRadius: 3, padding: "1px 5px" }}>
           {dd.trust === "org-approved" ? "🟢" : dd.trust === "reviewed" ? "🔵" : "🟡"} {dd.trust}
         </span>
-        {/* Install button / badge */}
+        {/* Install / In Library / Remove buttons */}
         {isInstalled ? (
-          <span style={{ fontSize: 9, color: "#4ec9b0", border: "1px solid #4ec9b044", borderRadius: 3, padding: "1px 6px" }}>
-            ✓ {lang === "zh" ? "已安装" : "Installed"}
-          </span>
+          <div style={{ display: "flex", gap: 4, alignItems: "center" }} onClick={e => e.stopPropagation()}>
+            <span style={{ fontSize: 9, color: "#4ec9b0", border: "1px solid #4ec9b044", borderRadius: 3, padding: "1px 6px" }}>
+              ✓ {t(lang as any, "skill_installed_label")}
+            </span>
+            <button
+              onClick={() => setShowUninstallConfirm(true)}
+              disabled={isUninstalling}
+              style={{
+                fontSize: 9, border: "1px solid #66333344", borderRadius: 3, padding: "1px 6px",
+                background: "none", color: isUninstalling ? "#555" : "#e05555aa",
+                cursor: isUninstalling ? "default" : "pointer",
+              }}
+            >
+              {isUninstalling ? t(lang as any, "skill_uninstalling") : t(lang as any, "skill_uninstall")}
+            </button>
+          </div>
         ) : (
           <button
             onClick={handleInstall}
@@ -407,7 +464,7 @@ function RegistryCard({ dd, lang, onInstalled }: { dd: DecisionDependency; lang:
               cursor: isInstalling ? "default" : "pointer",
             }}
           >
-            {isInstalling ? `${lang === "zh" ? "安装中" : "Installing"} ${progress}%` : (lang === "zh" ? "⬇ 安装" : "⬇ Install")}
+            {isInstalling ? `${t(lang as any, "skill_add_to_library")} ${progress}%` : `⬇ ${t(lang as any, "skill_add_to_library")}`}
           </button>
         )}
       </div>

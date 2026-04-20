@@ -90,7 +90,6 @@ nsis:
   menuCategory: MindAct
   shortcutName: MindAct
   uninstallDisplayName: "MindAct ${version}"
-  license: build-resources/license.txt
   installerSidebar: build-resources/installer-sidebar.bmp
   uninstallerSidebar: build-resources/installer-sidebar.bmp
   include: build-resources/installer.nsh

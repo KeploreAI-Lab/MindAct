@@ -4,7 +4,7 @@
 
 ; ── Welcome page ─────────────────────────────────────────────────────────────
 !define MUI_WELCOMEPAGE_TITLE "Welcome to MindAct"
-!define MUI_WELCOMEPAGE_TEXT "MindAct is an AI-powered decision and action assistant for robotics and automation projects.$\r$\n$\r$\nClick Install to begin, or click Back to review settings."
+!define MUI_WELCOMEPAGE_TEXT "MindAct is an AI-powered decision and action assistant for robotics and automation projects.$\r$\n$\r$\nBy clicking Install you agree to the MindAct Terms of Service.$\r$\n$\r$\nClick Install to begin, or click Back to review settings."
 
 ; ── Finish page ──────────────────────────────────────────────────────────────
 !define MUI_FINISHPAGE_TITLE "Installation Complete"
@@ -16,3 +16,14 @@
 
 !define MUI_UNFINISHPAGE_TITLE "Uninstall Complete"
 !define MUI_UNFINISHPAGE_TEXT "MindAct has been removed from your computer."
+
+; ── Uninstaller: ask whether to delete user data ─────────────────────────────
+; Runs before the uninstall UI is shown. Offers to wipe %APPDATA%\physmind\.
+Function un.onInit
+  MessageBox MB_YESNO|MB_ICONQUESTION \
+    "Would you also like to delete MindAct user data (API keys, config files)?$\n$\nPath: $APPDATA\physmind" \
+    IDNO mindact_keep_data
+  SetShellVarContext current
+  RMDir /r "$APPDATA\physmind"
+  mindact_keep_data:
+FunctionEnd

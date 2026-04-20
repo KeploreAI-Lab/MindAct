@@ -7,7 +7,7 @@
  * Consistent with the existing Bun serve() pattern in server.ts — no Express/Hono.
  */
 
-import { existsSync, mkdirSync, writeFileSync } from "fs";
+import { existsSync, mkdirSync, writeFileSync, rmSync, unlinkSync, readFileSync } from "fs";
 import { join } from "path";
 import { homedir } from "os";
 import { createHash } from "crypto";
@@ -522,6 +522,45 @@ export async function handleRegistry(
       return json({ ...dd, installed: false, install_warning: "Package zip not yet available on registry" });
     } catch (e: any) {
       return err(`Install failed: ${e.message}`);
+    }
+  }
+
+  // ── DELETE /api/registry/uninstall/:id ───────────────────────────────────
+  const uninstallMatch = url.pathname.match(/^\/api\/registry\/uninstall\/(.+)$/);
+  if (uninstallMatch && req.method === "DELETE") {
+    const skillId = decodeURIComponent(uninstallMatch[1]);
+    try {
+      // 1. Remove skill directory from skillsDir
+      const skillDir = join(skillsDir, skillId);
+      if (existsSync(skillDir)) {
+        rmSync(skillDir, { recursive: true, force: true });
+      }
+
+      // 2. Remove symlink from ~/.physmind/skills/<id>
+      const physmindSkillsDir = join(homedir(), ".physmind", "skills");
+      const symlinkPath = join(physmindSkillsDir, skillId);
+      try { unlinkSync(symlinkPath); } catch { /* ignore if not present */ }
+      // Also check ~/.config/physmind/claw/skills/<id>
+      const clawSkillsDir = join(homedir(), ".config", "physmind", "claw", "skills");
+      const clawSymlink = join(clawSkillsDir, skillId);
+      try { unlinkSync(clawSymlink); } catch { /* ignore */ }
+
+      // 3. Update installed-skills.json index
+      const indexPath = join(homedir(), ".physmind", "installed-skills.json");
+      if (existsSync(indexPath)) {
+        try {
+          const existing = JSON.parse(readFileSync(indexPath, "utf-8")) as any[];
+          const updated = existing.filter(s => s.id !== skillId && s !== skillId);
+          writeFileSync(indexPath, JSON.stringify(updated, null, 2), "utf-8");
+        } catch { /* ignore parse errors */ }
+      }
+
+      // 4. Invalidate cache
+      cacheInvalidateItem(skillId);
+
+      return json({ uninstalled: true, id: skillId });
+    } catch (e: any) {
+      return err(`Uninstall failed: ${e.message}`);
     }
   }
 
