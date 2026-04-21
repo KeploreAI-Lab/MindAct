@@ -18,12 +18,14 @@
 !define MUI_UNFINISHPAGE_TEXT "MindAct has been removed from your computer."
 
 ; ── Uninstaller: ask whether to delete user data ─────────────────────────────
-; Runs before the uninstall UI is shown. Offers to wipe %APPDATA%\physmind\.
-Function un.onInit
+; Called by electron-builder's generated un.onInit via !insertmacro customUnInit.
+; Do NOT define Function un.onInit here — electron-builder owns that function
+; and including a second definition causes "Function already exists" NSIS error.
+!macro customUnInit
   MessageBox MB_YESNO|MB_ICONQUESTION \
     "Would you also like to delete MindAct user data (API keys, config files)?$\n$\nPath: $APPDATA\physmind" \
     IDNO mindact_keep_data
   SetShellVarContext current
   RMDir /r "$APPDATA\physmind"
   mindact_keep_data:
-FunctionEnd
+!macroend
