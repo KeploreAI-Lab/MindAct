@@ -111,6 +111,43 @@ function ensureSpawnHelperExecutable() {
 }
 ensureSpawnHelperExecutable();
 
+// Windows: locate bash.exe from Git for Windows.
+// Returns the absolute path if found, null otherwise.
+// physmind calls setShellIfWindows() on startup which requires git-bash;
+// if not found it calls process.exit(1) — injecting the path pre-empts that.
+function findGitBashWindows() {
+  if (process.platform !== 'win32') return null;
+  // Honour user/system override first
+  if (process.env.CLAUDE_CODE_GIT_BASH_PATH) {
+    return fs.existsSync(process.env.CLAUDE_CODE_GIT_BASH_PATH)
+      ? process.env.CLAUDE_CODE_GIT_BASH_PATH
+      : null;
+  }
+  // Common default install locations
+  const defaults = [
+    'C:\\Program Files\\Git\\bin\\bash.exe',
+    'C:\\Program Files (x86)\\Git\\bin\\bash.exe',
+  ];
+  for (const p of defaults) {
+    if (fs.existsSync(p)) return p;
+  }
+  // Derive from git.exe in PATH: git.exe → ../../bin/bash.exe
+  try {
+    const { execSync } = require('child_process');
+    const gitLine = execSync('where git', {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    }).split('\n')[0].trim();
+    if (gitLine) {
+      const candidate = path.resolve(
+        path.join(path.dirname(gitLine), '..', '..', 'bin', 'bash.exe')
+      );
+      if (fs.existsSync(candidate)) return candidate;
+    }
+  } catch {}
+  return null;
+}
+
 function isExecutable(cmd) {
   const { execSync } = require('child_process');
   try {
@@ -283,6 +320,12 @@ function buildClawEnv(cols, rows) {
   if (process.platform !== 'win32') {
     env.TERM = 'xterm-256color';
     env.COLORTERM = 'truecolor';
+  }
+  // Windows: inject CLAUDE_CODE_GIT_BASH_PATH so physmind's setShellIfWindows()
+  // finds bash without its own PATH search (whose error output ConPTY can lose).
+  if (process.platform === 'win32') {
+    const gitBash = findGitBashWindows();
+    if (gitBash) env.CLAUDE_CODE_GIT_BASH_PATH = gitBash;
   }
   return env;
 }
