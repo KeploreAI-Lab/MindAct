@@ -26,3 +26,7 @@ create-release.sh
 INFRASTRUCTURE.md
 dist-electron/
 mindact-server
+commit_helper.sh
+/gitignored_backup_*
+backup_gitignored.sh
+gitignored_backup_*
