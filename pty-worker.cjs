@@ -411,6 +411,27 @@ function spawnTerm(cols, rows) {
     return;
   }
 
+  // Windows pre-flight: physmind requires git-bash (calls setShellIfWindows() on init
+  // which exits with code 1 if bash.exe is missing). Show a clear, actionable error
+  // HERE — before spawning — so the message is never lost to a ConPTY data-flush race.
+  if (process.platform === 'win32') {
+    const gitBash = findGitBashWindows();
+    if (!gitBash) {
+      send({
+        type: 'data',
+        data:
+          '\r\n\x1b[31m[MindAct] Terminal requires Git for Windows.\x1b[0m\r\n' +
+          '\x1b[90mPhysMind needs bash.exe from Git for Windows to operate.\x1b[0m\r\n' +
+          '\x1b[90m\u2460 Install Git from https://git-scm.com/downloads/win\x1b[0m\r\n' +
+          '\x1b[90m\u2461 Or set CLAUDE_CODE_GIT_BASH_PATH=C:\\\\path\\\\to\\\\bash.exe\x1b[0m\r\n' +
+          '\x1b[90m   Then restart MindAct.\x1b[0m\r\n\r\n',
+      });
+      send({ type: 'exit' });
+      process.exit(0);
+      return;
+    }
+  }
+
   try {
     term = pty.spawn(entry.command, entry.args, {
       name: 'xterm-256color',
@@ -526,9 +547,21 @@ function spawnTerm(cols, rows) {
     } catch {}
   }, 600);
 
-  term.onExit(() => {
-    send({ type: 'exit' });
-    process.exit(0);
+  term.onExit(({ exitCode } = {}) => {
+    // On Windows, ConPTY may buffer terminal output after the exit event fires.
+    // Delay 400 ms so any trailing data (e.g. physmind error messages) arrives
+    // via onData before we send the exit message to the client.
+    const flushDelay = process.platform === 'win32' ? 400 : 0;
+    setTimeout(() => {
+      if (exitCode !== 0 && exitCode != null) {
+        send({
+          type: 'data',
+          data: `\r\n\x1b[33m[MindAct] Process exited (code ${exitCode})\x1b[0m\r\n`,
+        });
+      }
+      send({ type: 'exit' });
+      process.exit(0);
+    }, flushDelay);
   });
 }
 
