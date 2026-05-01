@@ -33,6 +33,34 @@ const path = require('path');
 
 const cwd = process.env.PTY_CWD || process.cwd();
 
+function loadDotEnvFile() {
+  // Load MindAct/.env into process.env for the PTY worker only.
+  // This keeps terminal/provider config in one place for users.
+  const envPath = path.join(__dirname, '.env');
+  try {
+    if (!fs.existsSync(envPath)) return;
+    const raw = fs.readFileSync(envPath, 'utf-8');
+    for (const line of raw.split('\n')) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith('#')) continue;
+      const eq = trimmed.indexOf('=');
+      if (eq <= 0) continue;
+      const key = trimmed.slice(0, eq).trim();
+      let val = trimmed.slice(eq + 1).trim();
+      if (!key) continue;
+      // Strip optional surrounding quotes
+      if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
+        val = val.slice(1, -1);
+      }
+      // Do not overwrite existing env vars (shell overrides .env)
+      if (process.env[key] == null) process.env[key] = val;
+    }
+  } catch {
+    // ignore
+  }
+}
+loadDotEnvFile();
+
 function ensureSpawnHelperExecutable() {
   try {
     const helper = path.join(
@@ -118,33 +146,103 @@ function readKplrKey() {
   return null;
 }
 
-// Build the environment for claw: strip ANTHROPIC_API_KEY so claw doesn't
-// fall back to Claude, and inject KPLR_KEY + DASHSCOPE_API_KEY from the
-// credentials file so claw works in non-interactive PTY mode.
+function envStr(name) {
+  const v = process.env[name];
+  const s = (typeof v === 'string' ? v : '').trim();
+  return s || null;
+}
+
+function resolveProvider() {
+  const p = (envStr('MINDACT_AI_PROVIDER') || '').toLowerCase();
+  if (p === 'minimax') return 'minimax';
+  if (p === 'anthropic') return 'anthropic';
+  if (p === 'openai_compatible' || p === 'openai' || p === 'openai-compatible' || p === 'oai') return 'openai_compatible';
+  if (p === 'keplore') return 'keplore';
+  // Back-compat: default to keplore when KPLR_KEY exists, else anthropic.
+  return (readKplrKey() || envStr('KPLR_KEY')) ? 'keplore' : 'anthropic';
+}
+
+function minimaxStyle() {
+  const s = (envStr('MINDACT_MINIMAX_API_STYLE') || '').toLowerCase();
+  return s === 'openai' ? 'openai' : 'anthropic';
+}
+
+// Build the environment for physmind ("claw") based on selected provider.
 function buildClawEnv() {
   const env = { ...process.env };
-  delete env.ANTHROPIC_API_KEY;
-  delete env.ANTHROPIC_AUTH_TOKEN;
-  const kplrKey = readKplrKey() || env.KPLR_KEY;
-  if (kplrKey) {
-    env.KPLR_KEY = kplrKey;
-    env.DASHSCOPE_API_KEY = kplrKey;
-  } else {
+
+  const provider = resolveProvider();
+
+  // Always isolate config so ~/.claw/* (OAuth tokens etc.) won't interfere.
+  env.CLAW_CONFIG_HOME = path.join(require('os').homedir(), '.config', 'physmind', 'claw');
+
+  if (provider === 'keplore') {
+    // KeploreAI / DashScope-compatible: inject KPLR_KEY and proxy base URL.
+    delete env.ANTHROPIC_API_KEY;
+    delete env.ANTHROPIC_AUTH_TOKEN;
+    const kplrKey = readKplrKey() || env.KPLR_KEY;
+    if (kplrKey) {
+      env.KPLR_KEY = kplrKey;
+      env.DASHSCOPE_API_KEY = kplrKey;
+      env.DASHSCOPE_BASE_URL = envStr('MINDACT_KPLR_BASE_URL') || 'https://physmind-proxy.marvin-gao-cs.workers.dev/v1';
+    } else {
+      delete env.DASHSCOPE_API_KEY;
+      delete env.KPLR_KEY;
+      delete env.DASHSCOPE_BASE_URL;
+    }
+  } else if (provider === 'minimax') {
+    // MiniMax: prefer Anthropic-compatible API.
+    // https://platform.minimax.io/docs/api-reference/text-anthropic-api
     delete env.DASHSCOPE_API_KEY;
     delete env.KPLR_KEY;
+    delete env.DASHSCOPE_BASE_URL;
+    delete env.OPENAI_API_KEY;
+    delete env.OPENAI_BASE_URL;
+
+    const apiKey = envStr('MINDACT_MINIMAX_API_KEY');
+    // MiniMax Anthropic-compatible expects the secret key in `Authorization` header.
+    // Our Rust client supports both `x-api-key` and `Authorization: Bearer ...`.
+    // To be maximally compatible with proxies / gateways, we set BOTH.
+    if (apiKey) {
+      env.ANTHROPIC_API_KEY = apiKey;
+      env.ANTHROPIC_AUTH_TOKEN = apiKey;
+    } else {
+      delete env.ANTHROPIC_API_KEY;
+      delete env.ANTHROPIC_AUTH_TOKEN;
+    }
+
+    if (minimaxStyle() === 'anthropic') {
+      env.ANTHROPIC_BASE_URL = envStr('MINDACT_MINIMAX_ANTHROPIC_BASE_URL') || 'https://api.minimax.io/anthropic';
+    } else {
+      // OpenAI-compatible gateway mode (only if you have one).
+      // We map it into OPENAI_* so the CLI can route there if supported.
+      env.OPENAI_BASE_URL = envStr('MINDACT_MINIMAX_BASE_URL') || env.OPENAI_BASE_URL;
+      env.OPENAI_API_KEY = apiKey || env.OPENAI_API_KEY;
+    }
+  } else if (provider === 'anthropic') {
+    // Let user supply ANTHROPIC_* normally.
+    delete env.DASHSCOPE_API_KEY;
+    delete env.KPLR_KEY;
+    delete env.DASHSCOPE_BASE_URL;
+  } else if (provider === 'openai_compatible') {
+    // Let user supply OPENAI_* normally.
+    delete env.DASHSCOPE_API_KEY;
+    delete env.KPLR_KEY;
+    delete env.DASHSCOPE_BASE_URL;
   }
-  // Always inject proxy URL so claw routes to KeploreAI regardless of local shell config
-  env.DASHSCOPE_BASE_URL = 'https://physmind-proxy.marvin-gao-cs.workers.dev/v1';
-  // Point claw at a MindAct-specific config dir so ~/.claw/credentials.json
-  // (which may contain a saved Anthropic OAuth token) is never read.
-  env.CLAW_CONFIG_HOME = path.join(require('os').homedir(), '.config', 'physmind', 'claw');
+
   env.TERM = 'xterm-256color';
   env.COLORTERM = 'truecolor';
   return env;
 }
 
-function hasKplrKey() {
-  return !!(readKplrKey() || process.env.KPLR_KEY);
+function hasAnyProviderKey() {
+  const provider = resolveProvider();
+  if (provider === 'keplore') return !!(readKplrKey() || envStr('KPLR_KEY'));
+  if (provider === 'minimax') return !!envStr('MINDACT_MINIMAX_API_KEY');
+  if (provider === 'anthropic') return !!envStr('ANTHROPIC_API_KEY') || !!envStr('ANTHROPIC_AUTH_TOKEN');
+  if (provider === 'openai_compatible') return !!envStr('OPENAI_API_KEY');
+  return false;
 }
 
 let term = null;
@@ -158,11 +256,12 @@ function send(msg) {
 function spawnTerm(cols, rows) {
   if (term) { try { term.kill(); } catch {} }
 
-  if (!hasKplrKey()) {
+  if (!hasAnyProviderKey()) {
+    const provider = resolveProvider();
     send({
       type: 'data',
-      data: '\r\n\x1b[31m[PhysMind] No KeploreAI key found.\x1b[0m\r\n' +
-            '\x1b[90mGo to Settings and enter your kplr-... key to get started.\x1b[0m\r\n\r\n',
+      data: '\r\n\x1b[31m[PhysMind] Missing API key for current provider.\x1b[0m\r\n' +
+            `\x1b[90mProvider: ${provider}. Configure it in MindAct/.env (or your shell env) and restart the terminal.\x1b[0m\r\n\r\n`,
     });
     return;
   }
@@ -180,8 +279,18 @@ function spawnTerm(cols, rows) {
     return;
   }
 
+  // If using MiniMax, pass the desired model explicitly so we don't inherit CLI default (qwen-plus).
+  const provider = resolveProvider();
+  const extraArgs = [];
+  // Always allow `.env` to override the CLI's persisted model selection.
+  // This avoids "stuck on old model" when CLAW_CONFIG_HOME contains a saved model.
+  if (provider === 'minimax' || envStr('MINDACT_AI_PROVIDER') === 'minimax' || envStr('MINDACT_MINIMAX_MODEL')) {
+    const model = envStr('MINDACT_MINIMAX_MODEL') || 'MiniMax-M2.7';
+    extraArgs.push('--model', model);
+  }
+
   try {
-    term = pty.spawn(entry.command, entry.args, {
+    term = pty.spawn(entry.command, [...(entry.args || []), ...extraArgs], {
       name: 'xterm-256color',
       cols: cols || 120,
       rows: rows || 40,
