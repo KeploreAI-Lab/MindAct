@@ -11,6 +11,11 @@ function stripAnsi(s: string): string {
   return s.replace(/\x1B\[[\d;]*[A-Za-z]/g, "").replace(/\x1B[()][AB012]/g, "").replace(/\x1B./g, "");
 }
 
+function getPtyWebSocketUrl(): string {
+  const wsProtocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+  return `${wsProtocol}//${window.location.host}/ws/pty`;
+}
+
 function Terminal() {
   const terminalBanner = useStore(s => s.terminalBanner);
   const setTerminalBanner = useStore(s => s.setTerminalBanner);
@@ -310,7 +315,7 @@ function Terminal() {
   const connect = useCallback(() => {
     if (wsRef.current) { try { wsRef.current.close(); } catch {} }
 
-    const ws = new WebSocket("ws://localhost:3001/ws/pty");
+    const ws = new WebSocket(getPtyWebSocketUrl());
     wsRef.current = ws;
 
     ws.onopen = () => {
